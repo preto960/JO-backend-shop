@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import prisma from './lib/prisma.js';
+import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import ordersRouter from './routes/orders.js';
@@ -19,6 +20,7 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 
 // Rutas de la API
+app.use('/auth', authRouter);
 app.use('/products', productsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/orders', ordersRouter);
@@ -28,7 +30,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'JO-backend-shop',
-    version: '1.0.0',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -37,14 +39,34 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     message: 'JO-backend-shop API',
-    version: '1.0.0',
-    endpoints: {
-      health: 'GET /health',
-      products: 'GET /products',
-      productDetail: 'GET /products/:id',
+    version: '2.0.0',
+    auth: {
+      register: 'POST /auth/register',
+      login: 'POST /auth/login',
+      refresh: 'POST /auth/refresh',
+      profile: 'GET /auth/me',
+      updateProfile: 'PUT /auth/profile',
+    },
+    products: {
+      list: 'GET /products',
+      detail: 'GET /products/:id',
       search: 'GET /products/search?q=query',
-      categories: 'GET /categories',
-      createOrder: 'POST /orders',
+      create: 'POST /products (admin)',
+      update: 'PUT /products/:id (admin)',
+      delete: 'DELETE /products/:id (admin)',
+    },
+    categories: {
+      list: 'GET /categories',
+      create: 'POST /categories (admin)',
+      update: 'PUT /categories/:id (admin)',
+      delete: 'DELETE /categories/:id (admin)',
+    },
+    orders: {
+      list: 'GET /orders',
+      create: 'POST /orders',
+      updateStatus: 'PUT /orders/:id/status (admin)',
+      cancel: 'DELETE /orders/:id',
+      dashboard: 'GET /orders/stats/dashboard (admin)',
     },
   });
 });
@@ -57,12 +79,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Iniciar servidor (solo si no es Vercel)
+// Iniciar servidor (solo local, no en Vercel)
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`🚀 JO-backend-shop corriendo en puerto ${PORT}`);
-    console.log(`📍 Health: http://localhost:${PORT}/health`);
-    console.log(`📍 API: http://localhost:${PORT}/`);
+    console.log(`\n  JO-backend-shop v2.0.0`);
+    console.log(`  Puerto: ${PORT}`);
+    console.log(`  Health: http://localhost:${PORT}/health\n`);
   });
 }
 

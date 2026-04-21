@@ -1,15 +1,24 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
+import { authenticate, authorize, optionalAuth } from '../middleware/auth.js';
+import { sanitize } from '../services/auth.js';
 
 const router = express.Router();
 
-// GET /products - Listar productos
-router.get('/', async (req, res, next) => {
+// GET /products - Listar productos (público)
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, category, sort = 'newest' } = req.query;
+    const { page = 1, limit = 20, category, sort = 'newest', active } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const where = { active: true };
+    const where = {};
+    // Solo admin puede ver productos inactivos
+    if (req.user?.role !== 'admin') {
+      where.active = true;
+    } else if (active !== undefined) {
+      where.active = active === 'true';
+    }
+
     if (category) {
       where.categoryId = parseInt(category);
     }
@@ -45,7 +54,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // GET /products/search?q=query - Buscar productos
-router.get('/search', async (req, res, next) => {
+router.get('/search', optionalAuth, async (req, res, next) => {
   try {
     const { q, category, page = 1, limit = 20 } = req.query;
 
@@ -95,9 +104,8 @@ router.get('/search', async (req, res, next) => {
 // GET /products/:id - Detalle de producto
 router.get('/:id', async (req, res, next) => {
   try {
-    const { id } = req.params;
     const product = await prisma.product.findUnique({
-      where: { id: parseInt(id) },
+      where: { id: parseInt(req.params.id) },
       include: { category: { select: { id: true, name: true, slug: true } } },
     });
 
@@ -106,6 +114,142 @@ router.get('/:id', async (req, res, next) => {
     }
 
     res.json(product);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /products - Crear producto (solo admin)
+router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
+
+    // Validaciones
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
+    }
+    if (price === undefined || price === null || parseFloat(price) < 0) {
+      return res.status(400).json({ error: 'Precio válido requerido', field: 'price' });
+    }
+    if (categoryId === undefined || categoryId === null) {
+      return res.status(400).json({ error: 'Categoría requerida', field: 'categoryId' });
+    }
+
+    // Verificar categoría
+    const category = await prisma.category.findUnique({ where: { id: parseInt(categoryId) } });
+    if (!category) {
+      return res.status(404).json({ error: 'Categoría no encontrada', field: 'categoryId' });
+    }
+
+    // Generar slug
+    const slug = sanitize(name)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
+
+    // Verificar slug único
+    const existingSlug = await prisma.product.findUnique({ where: { slug } });
+    const finalSlug = existingSlug ? `${slug}-${Date.now()}` : slug;
+
+    const product = await prisma.product.create({
+      data: {
+        name: sanitize(name),
+        slug: finalSlug,
+        description: description ? sanitize(description) : null,
+        price: parseFloat(price),
+        image: image || null,
+        thumbnail: thumbnail || null,
+        stock: parseInt(stock) || 0,
+        active: active !== undefined ? Boolean(active) : true,
+        categoryId: parseInt(categoryId),
+      },
+      include: { category: true },
+    });
+
+    res.status(201).json({
+      message: 'Producto creado exitosamente',
+      product,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /products/:id - Actualizar producto (solo admin)
+router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const productId = parseInt(req.params.id);
+
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
+
+    const updateData = {};
+
+    if (name !== undefined) {
+      if (name.trim().length < 2) {
+        return res.status(400).json({ error: 'Nombre debe tener al menos 2 caracteres', field: 'name' });
+      }
+      updateData.name = sanitize(name);
+      const newSlug = sanitize(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      updateData.slug = newSlug;
+    }
+
+    if (description !== undefined) {
+      updateData.description = sanitize(description) || null;
+    }
+
+    if (price !== undefined) {
+      if (parseFloat(price) < 0) {
+        return res.status(400).json({ error: 'Precio no puede ser negativo', field: 'price' });
+      }
+      updateData.price = parseFloat(price);
+    }
+
+    if (image !== undefined) updateData.image = image || null;
+    if (thumbnail !== undefined) updateData.thumbnail = thumbnail || null;
+    if (stock !== undefined) updateData.stock = parseInt(stock);
+    if (active !== undefined) updateData.active = Boolean(active);
+
+    if (categoryId !== undefined) {
+      const category = await prisma.category.findUnique({ where: { id: parseInt(categoryId) } });
+      if (!category) {
+        return res.status(404).json({ error: 'Categoría no encontrada', field: 'categoryId' });
+      }
+      updateData.categoryId = parseInt(categoryId);
+    }
+
+    const updated = await prisma.product.update({
+      where: { id: productId },
+      data: updateData,
+      include: { category: true },
+    });
+
+    res.json({
+      message: 'Producto actualizado',
+      product: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /products/:id - Eliminar producto (solo admin)
+router.delete('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+  try {
+    const productId = parseInt(req.params.id);
+
+    const product = await prisma.product.findUnique({ where: { id: productId } });
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    await prisma.product.delete({ where: { id: productId } });
+
+    res.json({ message: 'Producto eliminado correctamente' });
   } catch (err) {
     next(err);
   }
