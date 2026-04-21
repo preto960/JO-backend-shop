@@ -135,7 +135,7 @@ model Store {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  ownerId     Int       @map("owner_id")
+  ownerId     Int       @unique @map("owner_id")
   owner       User      @relation("StoreOwner", fields: [ownerId], references: [id])
 
   products    Product[]
