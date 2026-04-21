@@ -1,0 +1,84 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL")
+}
+
+model Category {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique @db.VarChar(100)
+  slug      String    @unique @db.VarChar(120)
+  image     String?   @db.VarChar(500)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  products  Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  slug        String    @unique @db.VarChar(220)
+  description String?   @db.Text
+  price       Float
+  image       String?   @db.VarChar(500)
+  thumbnail   String?   @db.VarChar(500)
+  stock       Int       @default(0)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  categoryId  Int       @map("category_id")
+  category    Category  @relation(fields: [categoryId], references: [id])
+
+  orderItems  OrderItem[]
+
+  @@index([categoryId])
+  @@index([active])
+  @@index([name])
+  @@map("products")
+}
+
+model Order {
+  id            Int        @id @default(autoincrement())
+  customerName  String     @db.VarChar(200) @map("customer_name")
+  customerPhone String     @db.VarChar(30) @map("customer_phone")
+  customerAddr  String?    @db.Text @map("customer_address")
+  status        String     @default("pending") @db.VarChar(50)
+  total         Float
+  totalItems    Int        @default(0) @map("total_items")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  items         OrderItem[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          Int     @id @default(autoincrement())
+  productName String  @db.VarChar(200) @map("product_name")
+  productPrice Float  @map("product_price")
+  quantity    Int
+  subtotal    Float
+
+  orderId     Int     @map("order_id")
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId   Int?    @map("product_id")
+  product     Product? @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@map("order_items")
+}
