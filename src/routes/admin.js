@@ -324,6 +324,62 @@ router.post('/users/:id/permissions', authenticate, requirePermission('users.edi
   }
 });
 
+// PUT /auth/users/:id - Editar datos de un usuario (admin)
+router.put('/users/:id', authenticate, requirePermission('users.edit'), async (req, res, next) => {
+  try {
+    const userId = parseInt(req.params.id);
+    const { name, phone, birthdate, active } = req.body;
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const updateData = {};
+
+    if (name !== undefined) {
+      const sanitizedName = sanitize(name);
+      if (sanitizedName.length < 2) {
+        return res.status(400).json({ error: 'El nombre debe tener al menos 2 caracteres', field: 'name' });
+      }
+      updateData.name = sanitizedName;
+    }
+
+    if (phone !== undefined) {
+      updateData.phone = sanitize(phone) || null;
+    }
+
+    if (birthdate !== undefined) {
+      updateData.birthdate = sanitize(birthdate) || null;
+    }
+
+    if (active !== undefined) {
+      updateData.active = Boolean(active);
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        birthdate: true,
+        active: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({
+      message: 'Usuario actualizado correctamente',
+      user: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /auth/users/:id/permissions/:permissionId - Revocar permiso directo
 router.delete('/users/:id/permissions/:permissionId', authenticate, requirePermission('users.edit'), async (req, res, next) => {
   try {

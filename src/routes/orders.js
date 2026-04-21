@@ -5,6 +5,7 @@ import { authenticate, requirePermission, authorize } from '../middleware/auth.j
 const router = express.Router();
 
 // GET /orders - Listar pedidos
+// Admin: ve todos. Delivery: ve todos (para entregas). Customer: solo los suyos.
 router.get('/', authenticate, async (req, res, next) => {
   try {
     const { page = 1, limit = 20, status } = req.query;
@@ -12,7 +13,8 @@ router.get('/', authenticate, async (req, res, next) => {
 
     const where = {};
 
-    if (!req.user.roles.includes('admin')) {
+    // Solo filtrar por userId si es customer (no admin ni delivery)
+    if (!req.user.roles.includes('admin') && !req.user.roles.includes('delivery')) {
       where.userId = req.user.id;
     }
 
@@ -26,7 +28,12 @@ router.get('/', authenticate, async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
         skip,
         take: parseInt(limit),
-        include: { items: true },
+        include: {
+          items: true,
+          delivery: {
+            select: { id: true, name: true, phone: true },
+          },
+        },
       }),
       prisma.order.count({ where }),
     ]);
@@ -79,7 +86,12 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
     const recentOrders = await prisma.order.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
-      include: { items: true },
+      include: {
+        items: true,
+        delivery: {
+          select: { id: true, name: true, phone: true },
+        },
+      },
     });
 
     res.json({
@@ -102,14 +114,25 @@ router.get('/:id', authenticate, async (req, res, next) => {
   try {
     const order = await prisma.order.findUnique({
       where: { id: parseInt(req.params.id) },
-      include: { items: true },
+      include: {
+        items: true,
+        delivery: {
+          select: { id: true, name: true, phone: true },
+        },
+      },
     });
 
     if (!order) {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
-    if (!req.user.roles.includes('admin') && order.userId && order.userId !== req.user.id) {
+    // Solo admin, delivery asignado, o dueño del pedido pueden verlo
+    const isOwner = order.userId && order.userId === req.user.id;
+    const isDelivery = order.deliveryId && order.deliveryId === req.user.id;
+    const isAdmin = req.user.roles.includes('admin');
+    const isDeliveryRole = req.user.roles.includes('delivery');
+
+    if (!isAdmin && !isDeliveryRole && !isOwner) {
       return res.status(403).json({ error: 'No tienes permisos para ver este pedido' });
     }
 
@@ -122,7 +145,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
 // POST /orders - Crear pedido (requiere permiso orders.create)
 router.post('/', authenticate, requirePermission('orders.create'), async (req, res, next) => {
   try {
-    const { customer, items, total, totalItems } = req.body;
+    const { customer, items, total, totalItems, addressId } = req.body;
 
     if (!customer || !customer.name || !customer.phone) {
       return res.status(400).json({
@@ -134,6 +157,20 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
       return res.status(400).json({
         error: 'El pedido debe contener al menos un producto',
       });
+    }
+
+    // Si se proporciona un addressId, verificar que pertenece al usuario
+    let addressData = null;
+    if (addressId) {
+      const address = await prisma.address.findUnique({
+        where: { id: parseInt(addressId) },
+      });
+      if (address && address.userId === req.user.id) {
+        addressData = address.address;
+        if (!customer.address && addressData) {
+          customer.address = addressData;
+        }
+      }
     }
 
     const order = await prisma.$transaction(async (tx) => {
@@ -180,8 +217,9 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
   }
 });
 
-// PUT /orders/:id/status - Actualizar estado del pedido (requiere permiso orders.edit)
-router.put('/:id/status', authenticate, requirePermission('orders.edit'), async (req, res, next) => {
+// PUT /orders/:id/status - Actualizar estado del pedido
+// Admin y delivery pueden cambiar estado
+router.put('/:id/status', authenticate, async (req, res, next) => {
   try {
     const orderId = parseInt(req.params.id);
     const { status } = req.body;
@@ -198,10 +236,42 @@ router.put('/:id/status', authenticate, requirePermission('orders.edit'), async 
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
+    const isAdmin = req.user.roles.includes('admin');
+    const isDelivery = req.user.roles.includes('delivery');
+
+    // Delivery solo puede cambiar a shipped o delivered, y solo si está asignado
+    if (isDelivery && !isAdmin) {
+      if (order.deliveryId && order.deliveryId !== req.user.id) {
+        return res.status(403).json({ error: 'Este pedido te fue asignado a otro delivery' });
+      }
+      if (!['shipped', 'delivered'].includes(status)) {
+        return res.status(403).json({ error: 'Delivery solo puede marcar como "en camino" o "entregado"' });
+      }
+      if (!order.deliveryId) {
+        return res.status(403).json({ error: 'Debes aceptar el pedido primero' });
+      }
+    }
+
+    // No admin ni delivery con permiso orders.edit: no puede cambiar
+    if (!isAdmin && !isDelivery && !req.user.permissions.includes('orders.edit')) {
+      return res.status(403).json({ error: 'No tienes permisos para cambiar el estado' });
+    }
+
+    // Si delivery marca como shipped, asignarse como delivery
+    const updateData = { status };
+    if (isDelivery && status === 'shipped' && !order.deliveryId) {
+      updateData.deliveryId = req.user.id;
+    }
+
     const updated = await prisma.order.update({
       where: { id: orderId },
-      data: { status },
-      include: { items: true },
+      data: updateData,
+      include: {
+        items: true,
+        delivery: {
+          select: { id: true, name: true, phone: true },
+        },
+      },
     });
 
     res.json({
@@ -213,8 +283,66 @@ router.put('/:id/status', authenticate, requirePermission('orders.edit'), async 
   }
 });
 
-// DELETE /orders/:id - Cancelar/Eliminar pedido (requiere permiso orders.delete)
-router.delete('/:id', authenticate, requirePermission('orders.delete'), async (req, res, next) => {
+// PUT /orders/:id/assign - Asignar delivery a un pedido (admin/confirmer)
+router.put('/:id/assign', authenticate, async (req, res, next) => {
+  try {
+    const orderId = parseInt(req.params.id);
+    const { deliveryId } = req.body;
+
+    const isAdmin = req.user.roles.includes('admin');
+    if (!isAdmin && !req.user.permissions.includes('orders.edit')) {
+      return res.status(403).json({ error: 'Solo admin puede asignar delivery' });
+    }
+
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    if (!deliveryId) {
+      return res.status(400).json({ error: 'deliveryId es requerido' });
+    }
+
+    // Verificar que el delivery user existe y tiene el rol delivery
+    const deliveryUser = await prisma.user.findUnique({
+      where: { id: parseInt(deliveryId) },
+      include: { roles: { include: { role: true } } },
+    });
+
+    if (!deliveryUser) {
+      return res.status(404).json({ error: 'Usuario delivery no encontrado' });
+    }
+
+    const isDeliveryRole = deliveryUser.roles.some(r => r.role.name === 'delivery');
+    if (!isDeliveryRole) {
+      return res.status(400).json({ error: 'El usuario no tiene el rol de delivery' });
+    }
+
+    const updated = await prisma.order.update({
+      where: { id: orderId },
+      data: {
+        deliveryId: parseInt(deliveryId),
+        status: 'confirmed', // Al asignar delivery, confirmar el pedido
+      },
+      include: {
+        items: true,
+        delivery: {
+          select: { id: true, name: true, phone: true },
+        },
+      },
+    });
+
+    res.json({
+      message: 'Delivery asignado correctamente',
+      order: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /orders/:id - Cancelar/Eliminar pedido
+router.delete('/:id', authenticate, async (req, res, next) => {
   try {
     const orderId = parseInt(req.params.id);
 
@@ -227,8 +355,15 @@ router.delete('/:id', authenticate, requirePermission('orders.delete'), async (r
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
-    if (!req.user.roles.includes('admin') && order.userId !== req.user.id) {
+    const isAdmin = req.user.roles.includes('admin');
+    const hasPerm = req.user.permissions.includes('orders.delete');
+
+    if (!isAdmin && !hasPerm) {
       return res.status(403).json({ error: 'No tienes permisos para cancelar este pedido' });
+    }
+
+    if (!isAdmin && order.userId !== req.user.id) {
+      return res.status(403).json({ error: 'No puedes cancelar pedidos de otros usuarios' });
     }
 
     if (!['pending', 'confirmed'].includes(order.status)) {

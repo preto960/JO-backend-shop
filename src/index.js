@@ -6,6 +6,7 @@ import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import ordersRouter from './routes/orders.js';
+import addressesRouter from './routes/addresses.js';
 import adminRouter from './routes/admin.js';
 
 const app = express();
@@ -26,6 +27,7 @@ app.use('/auth', adminRouter); // Sub-rutas: /auth/permissions, /auth/roles, /au
 app.use('/products', productsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/orders', ordersRouter);
+app.use('/addresses', addressesRouter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -77,9 +79,18 @@ app.get('/', (req, res) => {
     orders: {
       list: 'GET /orders',
       create: 'POST /orders (orders.create)',
+      detail: 'GET /orders/:id',
       updateStatus: 'PUT /orders/:id/status (orders.edit)',
+      assignDelivery: 'PUT /orders/:id/assign (orders.edit)',
       cancel: 'DELETE /orders/:id (orders.delete)',
       dashboard: 'GET /orders/stats/dashboard (dashboard.view)',
+    },
+    addresses: {
+      list: 'GET /addresses (auth)',
+      create: 'POST /addresses (auth)',
+      update: 'PUT /addresses/:id (auth)',
+      setDefault: 'PUT /addresses/:id/default (auth)',
+      delete: 'DELETE /addresses/:id (auth)',
     },
   });
 });

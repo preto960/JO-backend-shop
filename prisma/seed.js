@@ -35,6 +35,15 @@ const MODULES = {
       { name: 'Eliminar pedidos', code: 'orders.delete', description: 'Permite cancelar/eliminar pedidos' },
     ],
   },
+  delivery: {
+    name: 'Delivery',
+    permissions: [
+      { name: 'Ver menú Entregas', code: 'delivery.view_menu', description: 'Permite ver el módulo de entregas en el menú' },
+      { name: 'Leer entregas', code: 'delivery.read', description: 'Permite ver la lista de entregas' },
+      { name: 'Aceptar entregas', code: 'delivery.accept', description: 'Permite aceptar pedidos para entrega' },
+      { name: 'Confirmar entregas', code: 'delivery.confirm', description: 'Permite confirmar entrega de pedidos' },
+    ],
+  },
   users: {
     name: 'Usuarios',
     permissions: [
@@ -63,6 +72,7 @@ async function main() {
   await prisma.userRole.deleteMany();
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();
+  await prisma.address.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
   await prisma.user.deleteMany();
@@ -111,12 +121,19 @@ async function main() {
     },
   });
 
-  console.log(`✅ 3 roles creados: admin, customer, editor`);
+  const deliveryRole = await prisma.role.create({
+    data: {
+      name: 'delivery',
+      description: 'Repartidor. Puede ver pedidos confirmados, aceptar entregas y confirmar entregas.',
+      active: true,
+    },
+  });
+
+  console.log(`✅ 4 roles creados: admin, customer, editor, delivery`);
 
   // ─── Asignar permisos a roles ─────────────────────────────────────────────
 
   // Admin: TODOS los permisos
-  const allPermCodes = allPermissions.map(p => p.code);
   await prisma.rolePermission.createMany({
     data: allPermissions.map(p => ({
       roleId: adminRole.id,
@@ -152,12 +169,28 @@ async function main() {
     })),
   });
 
+  // Delivery: puede ver entregas, aceptar y confirmar
+  const deliveryPermCodes = [
+    'delivery.view_menu', 'delivery.read', 'delivery.accept', 'delivery.confirm',
+    'orders.view_menu', 'orders.read',
+    'products.view_menu', 'products.read',
+    'categories.view_menu', 'categories.read',
+  ];
+  const deliveryPerms = allPermissions.filter(p => deliveryPermCodes.includes(p.code));
+  await prisma.rolePermission.createMany({
+    data: deliveryPerms.map(p => ({
+      roleId: deliveryRole.id,
+      permissionId: p.id,
+    })),
+  });
+
   console.log(`✅ Permisos asignados a roles`);
 
   // ─── Crear usuarios ───────────────────────────────────────────────────────
   const adminPassword = await bcrypt.hash('Admin123', 12);
   const customerPassword = await bcrypt.hash('Cliente123', 12);
   const editorPassword = await bcrypt.hash('Editor123', 12);
+  const deliveryPassword = await bcrypt.hash('Delivery123', 12);
 
   const admin = await prisma.user.create({
     data: {
@@ -174,6 +207,8 @@ async function main() {
       name: 'Cliente Demo',
       email: 'cliente@joshop.com',
       password: customerPassword,
+      phone: '+58 412-1234567',
+      birthdate: '1995-06-15',
       active: true,
       emailVerified: new Date(),
     },
@@ -189,6 +224,17 @@ async function main() {
     },
   });
 
+  const deliveryUser = await prisma.user.create({
+    data: {
+      name: 'Repartidor Demo',
+      email: 'delivery@joshop.com',
+      password: deliveryPassword,
+      phone: '+58 414-9876543',
+      active: true,
+      emailVerified: new Date(),
+    },
+  });
+
   console.log('✅ Usuarios creados');
 
   // ─── Asignar roles a usuarios ─────────────────────────────────────────────
@@ -197,13 +243,13 @@ async function main() {
       { userId: admin.id, roleId: adminRole.id },
       { userId: customer.id, roleId: customerRole.id },
       { userId: editor.id, roleId: editorRole.id },
+      { userId: deliveryUser.id, roleId: deliveryRole.id },
     ],
   });
 
   console.log('✅ Roles asignados a usuarios');
 
   // ─── Ejemplo de permiso directo a usuario ─────────────────────────────────
-  // Le damos al editor permiso directo para ver pedidos (aunque su rol no lo tenga)
   const ordersViewMenu = allPermissions.find(p => p.code === 'orders.view_menu');
   if (ordersViewMenu) {
     await prisma.userPermission.create({
@@ -214,6 +260,35 @@ async function main() {
     });
     console.log('✅ Permiso directo "orders.view_menu" asignado al editor');
   }
+
+  // ─── Crear dirección de ejemplo para el cliente ───────────────────────────
+  await prisma.address.create({
+    data: {
+      userId: customer.id,
+      label: 'Casa',
+      address: 'Av. Libertador, Torre A, Piso 5, Apartamento 502',
+      city: 'Caracas',
+      notes: 'Portero automático #502, llamado por interfono',
+      lat: 10.4912,
+      lng: -66.8798,
+      isDefault: true,
+    },
+  });
+
+  await prisma.address.create({
+    data: {
+      userId: customer.id,
+      label: 'Oficina',
+      address: 'Calle Paris, Edificio Caroní, Piso 3, Oficina 301',
+      city: 'Caracas',
+      notes: 'Recepción ground floor, pedir por mi nombre',
+      lat: 10.4887,
+      lng: -66.8734,
+      isDefault: false,
+    },
+  });
+
+  console.log('✅ Direcciones de ejemplo creadas para el cliente');
 
   // ─── Crear categorías ────────────────────────────────────────────────────
   const categories = await Promise.all([
@@ -257,17 +332,19 @@ async function main() {
   const totalStock = createdProducts.reduce((sum, p) => sum + p.stock, 0);
 
   console.log(`\n📊 Resumen general:`);
-  console.log(`   Roles: 3 (admin, customer, editor)`);
+  console.log(`   Roles: 4 (admin, customer, editor, delivery)`);
   console.log(`   Permisos: ${allPermissions.length} (${Object.keys(MODULES).length} módulos)`);
-  console.log(`   Usuarios: 3`);
+  console.log(`   Usuarios: 4`);
+  console.log(`   Direcciones: 2 (cliente demo)`);
   console.log(`   Categorías: ${categories.length}`);
   console.log(`   Productos: ${createdProducts.length}`);
   console.log(`   Stock total: ${totalStock} unidades`);
 
   console.log(`\n🔐 Credenciales de prueba:`);
-  console.log(`   ADMIN:   admin@joshop.com / Admin123 (acceso total)`);
-  console.log(`   EDITOR:  editor@joshop.com / Editor123 (productos + categorías)`);
-  console.log(`   CLIENTE: cliente@joshop.com / Cliente123 (solo compra)`);
+  console.log(`   ADMIN:     admin@joshop.com / Admin123 (acceso total)`);
+  console.log(`   EDITOR:    editor@joshop.com / Editor123 (productos + categorías)`);
+  console.log(`   CLIENTE:   cliente@joshop.com / Cliente123 (solo compra)`);
+  console.log(`   DELIVERY:  delivery@joshop.com / Delivery123 (entregas)`);
 
   console.log(`\n📋 Módulos y permisos:`);
   for (const [module, config] of Object.entries(MODULES)) {

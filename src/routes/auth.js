@@ -21,6 +21,7 @@ const formatUserResponse = async (user) => {
     name: user.name,
     email: user.email,
     phone: user.phone,
+    birthdate: user.birthdate,
     active: user.active,
     emailVerified: user.emailVerified,
     createdAt: user.createdAt,
@@ -32,7 +33,7 @@ const formatUserResponse = async (user) => {
 // POST /auth/register - Registro
 router.post('/register', async (req, res, next) => {
   try {
-    const { name, email, password, phone } = req.body;
+    const { name, email, password, phone, birthdate } = req.body;
 
     const sanitizedName = sanitize(name);
     const sanitizedEmail = sanitize(email)?.toLowerCase();
@@ -85,6 +86,7 @@ router.post('/register', async (req, res, next) => {
         email: sanitizedEmail,
         password: hashedPassword,
         phone: phone ? sanitize(phone) : null,
+        birthdate: birthdate ? sanitize(birthdate) : null,
         emailVerified: new Date(),
       },
     });
@@ -284,7 +286,7 @@ router.put('/profile', async (req, res, next) => {
       return res.status(401).json({ error: 'Token inválido' });
     }
 
-    const { name, phone, currentPassword, newPassword } = req.body;
+    const { name, phone, birthdate, currentPassword, newPassword } = req.body;
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
@@ -302,6 +304,10 @@ router.put('/profile', async (req, res, next) => {
 
     if (phone !== undefined) {
       updateData.phone = sanitize(phone) || null;
+    }
+
+    if (birthdate !== undefined) {
+      updateData.birthdate = sanitize(birthdate) || null;
     }
 
     if (newPassword) {

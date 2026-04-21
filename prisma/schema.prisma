@@ -82,18 +82,42 @@ model User {
   email         String    @unique @db.VarChar(200)
   password      String    @db.VarChar(255)
   phone         String?   @db.VarChar(30)
+  birthdate     String?   @db.VarChar(10)
   active        Boolean   @default(true)
   emailVerified DateTime? @map("email_verified_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
   orders      Order[]
+  addresses   Address[]
+  deliveries  Order[]    @relation("DeliveryPerson")
   roles       UserRole[]
   permissions UserPermission[]
 
   @@index([email])
   @@index([active])
   @@map("users")
+}
+
+// ─── DIRECCIONES ───────────────────────────────────────────────────────────────
+
+model Address {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  label     String   @db.VarChar(100)
+  address   String   @db.Text
+  city      String?  @db.VarChar(100)
+  notes     String?  @db.Text
+  lat       Float?   @db.Double
+  lng       Float?   @db.Double
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("addresses")
 }
 
 // ─── TIENDA ────────────────────────────────────────────────────────────────────
@@ -151,11 +175,15 @@ model Order {
   userId        Int?       @map("user_id")
   user          User?      @relation(fields: [userId], references: [id])
 
+  deliveryId    Int?       @map("delivery_id")
+  delivery      User?      @relation("DeliveryPerson", fields: [deliveryId], references: [id])
+
   items         OrderItem[]
 
   @@index([status])
   @@index([createdAt])
   @@index([userId])
+  @@index([deliveryId])
   @@map("orders")
 }
 
