@@ -8,6 +8,7 @@ import categoriesRouter from './routes/categories.js';
 import ordersRouter from './routes/orders.js';
 import addressesRouter from './routes/addresses.js';
 import adminRouter from './routes/admin.js';
+import storesRouter from './routes/stores.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +29,7 @@ app.use('/products', productsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/orders', ordersRouter);
 app.use('/addresses', addressesRouter);
+app.use('/stores', storesRouter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -82,8 +84,18 @@ app.get('/', (req, res) => {
       detail: 'GET /orders/:id',
       updateStatus: 'PUT /orders/:id/status (orders.edit)',
       assignDelivery: 'PUT /orders/:id/assign (orders.edit)',
+      available: 'GET /orders/available (delivery.accept)',
+      accept: 'POST /orders/:id/accept (delivery.accept)',
       cancel: 'DELETE /orders/:id (orders.delete)',
       dashboard: 'GET /orders/stats/dashboard (dashboard.view)',
+    },
+    stores: {
+      list: 'GET /stores',
+      detail: 'GET /stores/:id',
+      myStore: 'GET /stores/my-store (auth)',
+      create: 'POST /stores (stores.create / editor)',
+      update: 'PUT /stores/:id (stores.edit / own store)',
+      delete: 'DELETE /stores/:id (stores.delete / admin)',
     },
     addresses: {
       list: 'GET /addresses (auth)',

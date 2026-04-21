@@ -93,6 +93,7 @@ model User {
   deliveries  Order[]    @relation("DeliveryPerson")
   roles       UserRole[]
   permissions UserPermission[]
+  ownedStore  Store?     @relation("StoreOwner")
 
   @@index([email])
   @@index([active])
@@ -120,7 +121,31 @@ model Address {
   @@map("addresses")
 }
 
-// ─── TIENDA ────────────────────────────────────────────────────────────────────
+// ─── TIENDAS (EMPRESAS DE EDITORES) ───────────────────────────────────────────
+
+model Store {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(200)
+  slug        String    @unique @db.VarChar(220)
+  description String?   @db.Text
+  logo        String?   @db.VarChar(500)
+  phone       String?   @db.VarChar(30)
+  address     String?   @db.Text
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  ownerId     Int       @map("owner_id")
+  owner       User      @relation("StoreOwner", fields: [ownerId], references: [id])
+
+  products    Product[]
+
+  @@index([ownerId])
+  @@index([active])
+  @@map("stores")
+}
+
+// ─── CATEGORÍAS ───────────────────────────────────────────────────────────────
 
 model Category {
   id        Int       @id @default(autoincrement())
@@ -150,6 +175,9 @@ model Product {
 
   categoryId  Int       @map("category_id")
   category    Category  @relation(fields: [categoryId], references: [id])
+
+  storeId     Int?       @map("store_id")
+  store       Store?     @relation(fields: [storeId], references: [id])
 
   orderItems  OrderItem[]
 

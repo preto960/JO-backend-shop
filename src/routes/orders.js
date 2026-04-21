@@ -20,6 +20,9 @@ router.get('/', authenticate, async (req, res, next) => {
 
     if (status) {
       where.status = status;
+    } else if (req.user.roles.includes('delivery')) {
+      // Delivery por defecto solo ve los que puede tomar (sin asignar) + los suyos
+      // Pero lo dejamos flexible para que también vea sus asignados
     }
 
     const [orders, total] = await Promise.all([
@@ -217,6 +220,100 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
   }
 });
 
+// GET /orders/available - Pedidos disponibles para que delivery acepte (sin asignar)
+router.get('/available', authenticate, requirePermission('delivery.accept'), async (req, res, next) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        status: { in: ['confirmed', 'pending'] },
+        deliveryId: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        items: true,
+        user: { select: { id: true, name: true, phone: true } },
+      },
+    });
+
+    res.json({
+      data: orders,
+      total: orders.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /orders/:id/accept - Delivery acepta un pedido (con bloqueo atómico para race conditions)
+router.post('/:id/accept', authenticate, requirePermission('delivery.accept'), async (req, res, next) => {
+  try {
+    const orderId = parseInt(req.params.id);
+
+    // updateMany con WHERE es atómico a nivel BD: solo uno de los dos concurrentes obtendrá count=1
+    const result = await prisma.order.updateMany({
+      where: {
+        id: orderId,
+        status: { in: ['confirmed', 'pending'] },
+        deliveryId: null,
+      },
+      data: {
+        deliveryId: req.user.id,
+        status: 'shipped',
+      },
+    });
+
+    if (result.count === 0) {
+      // El pedido fue tomado por otro o ya no está disponible
+      const existing = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          delivery: { select: { id: true, name: true } },
+        },
+      });
+
+      if (!existing) {
+        return res.status(404).json({ error: 'Pedido no encontrado' });
+      }
+
+      if (existing.deliveryId && existing.deliveryId !== req.user.id) {
+        return res.status(409).json({
+          error: 'Este pedido ya fue asignado a otro repartidor',
+          assignedTo: existing.delivery,
+          code: 'ORDER_ALREADY_ASSIGNED',
+        });
+      }
+
+      if (existing.status === 'shipped' || existing.status === 'delivered') {
+        return res.status(409).json({
+          error: 'Este pedido ya está en camino o fue entregado',
+          code: 'ORDER_NOT_AVAILABLE',
+        });
+      }
+
+      return res.status(409).json({
+        error: 'Este pedido no está disponible para aceptar',
+        code: 'ORDER_NOT_AVAILABLE',
+      });
+    }
+
+    // Retornar el pedido actualizado
+    const updated = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        items: true,
+        delivery: { select: { id: true, name: true, phone: true } },
+      },
+    });
+
+    res.json({
+      message: 'Pedido aceptado correctamente',
+      order: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PUT /orders/:id/status - Actualizar estado del pedido
 // Admin y delivery pueden cambiar estado
 router.put('/:id/status', authenticate, async (req, res, next) => {
@@ -257,11 +354,7 @@ router.put('/:id/status', authenticate, async (req, res, next) => {
       return res.status(403).json({ error: 'No tienes permisos para cambiar el estado' });
     }
 
-    // Si delivery marca como shipped, asignarse como delivery
     const updateData = { status };
-    if (isDelivery && status === 'shipped' && !order.deliveryId) {
-      updateData.deliveryId = req.user.id;
-    }
 
     const updated = await prisma.order.update({
       where: { id: orderId },

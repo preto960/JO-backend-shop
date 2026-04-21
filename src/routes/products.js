@@ -8,7 +8,7 @@ const router = express.Router();
 // GET /products - Listar productos (lectura pública para auth optional)
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const { page = 1, limit = 20, category, sort = 'newest', active } = req.query;
+    const { page = 1, limit = 20, category, store, sort = 'newest', active } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
@@ -24,6 +24,18 @@ router.get('/', optionalAuth, async (req, res, next) => {
       where.categoryId = parseInt(category);
     }
 
+    // Editor solo ve productos de su tienda
+    if (req.user && req.user.roles.includes('editor') && !req.user.roles.includes('admin')) {
+      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
+      if (editorStore) {
+        where.storeId = editorStore.id;
+      }
+    }
+
+    if (store) {
+      where.storeId = parseInt(store);
+    }
+
     let orderBy = { createdAt: 'desc' };
     if (sort === 'price_asc') orderBy = { price: 'asc' };
     if (sort === 'price_desc') orderBy = { price: 'desc' };
@@ -35,7 +47,10 @@ router.get('/', optionalAuth, async (req, res, next) => {
         orderBy,
         skip,
         take: parseInt(limit),
-        include: { category: { select: { id: true, name: true } } },
+        include: {
+          category: { select: { id: true, name: true } },
+          store: { select: { id: true, name: true, slug: true } },
+        },
       }),
       prisma.product.count({ where }),
     ]);
@@ -57,7 +72,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
 // GET /products/search?q=query - Buscar productos
 router.get('/search', optionalAuth, async (req, res, next) => {
   try {
-    const { q, category, page = 1, limit = 20 } = req.query;
+    const { q, category, store, page = 1, limit = 20 } = req.query;
 
     if (!q || q.trim().length === 0) {
       return res.status(400).json({ error: 'Parámetro de búsqueda "q" es requerido' });
@@ -75,6 +90,10 @@ router.get('/search', optionalAuth, async (req, res, next) => {
       where.categoryId = parseInt(category);
     }
 
+    if (store) {
+      where.storeId = parseInt(store);
+    }
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const [products, total] = await Promise.all([
@@ -83,7 +102,10 @@ router.get('/search', optionalAuth, async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
         skip,
         take: parseInt(limit),
-        include: { category: { select: { id: true, name: true } } },
+        include: {
+          category: { select: { id: true, name: true } },
+          store: { select: { id: true, name: true, slug: true } },
+        },
       }),
       prisma.product.count({ where }),
     ]);
@@ -107,7 +129,10 @@ router.get('/:id', async (req, res, next) => {
   try {
     const product = await prisma.product.findUnique({
       where: { id: parseInt(req.params.id) },
-      include: { category: { select: { id: true, name: true, slug: true } } },
+      include: {
+        category: { select: { id: true, name: true, slug: true } },
+        store: { select: { id: true, name: true, slug: true } },
+      },
     });
 
     if (!product) {
@@ -123,7 +148,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /products - Crear producto (requiere permiso products.create)
 router.post('/', authenticate, requirePermission('products.create'), async (req, res, next) => {
   try {
-    const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
+    const { name, description, price, image, thumbnail, stock, categoryId, storeId, active } = req.body;
 
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
@@ -138,6 +163,15 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
     const category = await prisma.category.findUnique({ where: { id: parseInt(categoryId) } });
     if (!category) {
       return res.status(404).json({ error: 'Categoría no encontrada', field: 'categoryId' });
+    }
+
+    // Auto-asignar tienda del editor
+    let targetStoreId = storeId ? parseInt(storeId) : null;
+    const isAdmin = req.user.roles.includes('admin');
+    const isEditor = req.user.roles.includes('editor');
+    if (!targetStoreId && isEditor) {
+      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
+      if (editorStore) targetStoreId = editorStore.id;
     }
 
     const slug = sanitize(name)
@@ -159,8 +193,12 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
         stock: parseInt(stock) || 0,
         active: active !== undefined ? Boolean(active) : true,
         categoryId: parseInt(categoryId),
+        ...(targetStoreId ? { storeId: targetStoreId } : {}),
       },
-      include: { category: true },
+      include: {
+        category: true,
+        store: { select: { id: true, name: true } },
+      },
     });
 
     res.status(201).json({
@@ -177,9 +215,21 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
   try {
     const productId = parseInt(req.params.id);
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      include: { store: { select: { id: true } } },
+    });
     if (!product) {
       return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    // Editor solo puede editar productos de su tienda
+    const isEditor = req.user.roles.includes('editor') && !req.user.roles.includes('admin');
+    if (isEditor && product.storeId) {
+      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
+      if (editorStore && product.storeId !== editorStore.id) {
+        return res.status(403).json({ error: 'Solo puedes editar productos de tu tienda' });
+      }
     }
 
     const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
@@ -221,7 +271,10 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
     const updated = await prisma.product.update({
       where: { id: productId },
       data: updateData,
-      include: { category: true },
+      include: {
+        category: true,
+        store: { select: { id: true, name: true } },
+      },
     });
 
     res.json({
@@ -238,9 +291,21 @@ router.delete('/:id', authenticate, requirePermission('products.delete'), async 
   try {
     const productId = parseInt(req.params.id);
 
-    const product = await prisma.product.findUnique({ where: { id: productId } });
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      include: { store: { select: { id: true } } },
+    });
     if (!product) {
       return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    // Editor solo puede eliminar productos de su tienda
+    const isEditor = req.user.roles.includes('editor') && !req.user.roles.includes('admin');
+    if (isEditor && product.storeId) {
+      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
+      if (editorStore && product.storeId !== editorStore.id) {
+        return res.status(403).json({ error: 'Solo puedes eliminar productos de tu tienda' });
+      }
     }
 
     await prisma.product.delete({ where: { id: productId } });
