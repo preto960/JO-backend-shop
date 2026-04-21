@@ -192,11 +192,13 @@ async function main() {
   console.log('✅ Usuarios creados');
 
   // ─── Asignar roles a usuarios ─────────────────────────────────────────────
-  await prisma.userRole.createMany([
-    { userId: admin.id, roleId: adminRole.id },
-    { userId: customer.id, roleId: customerRole.id },
-    { userId: editor.id, roleId: editorRole.id },
-  ]);
+  await prisma.userRole.createMany({
+    data: [
+      { userId: admin.id, roleId: adminRole.id },
+      { userId: customer.id, roleId: customerRole.id },
+      { userId: editor.id, roleId: editorRole.id },
+    ],
+  });
 
   console.log('✅ Roles asignados a usuarios');
 
