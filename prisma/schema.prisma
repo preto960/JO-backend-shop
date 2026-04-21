@@ -8,24 +8,95 @@ datasource db {
   directUrl = env("DATABASE_URL")
 }
 
+// ─── ROLES Y PERMISOS ──────────────────────────────────────────────────────────
+
+model Role {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(50)
+  description String?   @db.VarChar(200)
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  users       UserRole[]
+  permissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(100)
+  code        String    @unique @db.VarChar(100)
+  module      String    @db.VarChar(50)
+  description String?   @db.VarChar(200)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  roles       RolePermission[]
+  users       UserPermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model UserRole {
+  userId     Int      @map("user_id")
+  roleId     Int      @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       Int @map("role_id")
+  permissionId Int @map("permission_id")
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserPermission {
+  userId       Int      @map("user_id")
+  permissionId Int      @map("permission_id")
+  grantedAt    DateTime @default(now()) @map("granted_at")
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@map("user_permissions")
+}
+
+// ─── USUARIO ───────────────────────────────────────────────────────────────────
+
 model User {
   id            Int       @id @default(autoincrement())
   name          String    @db.VarChar(200)
   email         String    @unique @db.VarChar(200)
   password      String    @db.VarChar(255)
   phone         String?   @db.VarChar(30)
-  role          String    @default("customer") @db.VarChar(50)
   active        Boolean   @default(true)
   emailVerified DateTime? @map("email_verified_at")
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
-  orders        Order[]
+  orders      Order[]
+  roles       UserRole[]
+  permissions UserPermission[]
 
   @@index([email])
-  @@index([role])
+  @@index([active])
   @@map("users")
 }
+
+// ─── TIENDA ────────────────────────────────────────────────────────────────────
 
 model Category {
   id        Int       @id @default(autoincrement())
@@ -64,6 +135,8 @@ model Product {
   @@map("products")
 }
 
+// ─── PEDIDOS ───────────────────────────────────────────────────────────────────
+
 model Order {
   id            Int        @id @default(autoincrement())
   customerName  String     @db.VarChar(200) @map("customer_name")
@@ -87,17 +160,17 @@ model Order {
 }
 
 model OrderItem {
-  id          Int     @id @default(autoincrement())
-  productName String  @db.VarChar(200) @map("product_name")
+  id           Int    @id @default(autoincrement())
+  productName  String @db.VarChar(200) @map("product_name")
   productPrice Float  @map("product_price")
-  quantity    Int
-  subtotal    Float
+  quantity     Int
+  subtotal     Float
 
-  orderId     Int     @map("order_id")
-  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId   Int      @map("order_id")
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  productId   Int?    @map("product_id")
-  product     Product? @relation(fields: [productId], references: [id])
+  productId Int?     @map("product_id")
+  product  Product?  @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@map("order_items")

@@ -1,6 +1,6 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
-import { authenticate, authorize } from '../middleware/auth.js';
+import { authenticate, requirePermission } from '../middleware/auth.js';
 import { sanitize } from '../services/auth.js';
 
 const router = express.Router();
@@ -48,8 +48,8 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// POST /categories - Crear categoría (solo admin)
-router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
+// POST /categories - Crear categoría (requiere permiso categories.create)
+router.post('/', authenticate, requirePermission('categories.create'), async (req, res, next) => {
   try {
     const { name, image } = req.body;
 
@@ -90,8 +90,8 @@ router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// PUT /categories/:id - Actualizar categoría (solo admin)
-router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+// PUT /categories/:id - Actualizar categoría (requiere permiso categories.edit)
+router.put('/:id', authenticate, requirePermission('categories.edit'), async (req, res, next) => {
   try {
     const categoryId = parseInt(req.params.id);
 
@@ -134,8 +134,8 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// DELETE /categories/:id - Eliminar categoría (solo admin)
-router.delete('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+// DELETE /categories/:id - Eliminar categoría (requiere permiso categories.delete)
+router.delete('/:id', authenticate, requirePermission('categories.delete'), async (req, res, next) => {
   try {
     const categoryId = parseInt(req.params.id);
 

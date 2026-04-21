@@ -1,6 +1,6 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
-import { authenticate, authorize, optionalAuth } from '../middleware/auth.js';
+import { authenticate, requirePermission, authorize } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -12,8 +12,7 @@ router.get('/', authenticate, async (req, res, next) => {
 
     const where = {};
 
-    // Los clientes solo ven sus propios pedidos
-    if (req.user.role === 'customer') {
+    if (!req.user.roles.includes('admin')) {
       where.userId = req.user.id;
     }
 
@@ -46,6 +45,58 @@ router.get('/', authenticate, async (req, res, next) => {
   }
 });
 
+// ⚠️ ESTA RUTA DEBE IR ANTES DE /:id PARA EVITAR CONFLICTO
+// GET /orders/stats/dashboard - Estadísticas (requiere permiso dashboard.view)
+router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view'), async (req, res, next) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const [
+      totalOrders,
+      totalRevenue,
+      todayOrders,
+      todayRevenue,
+      pendingOrders,
+      totalProducts,
+      totalCustomers,
+    ] = await Promise.all([
+      prisma.order.count({ where: { status: { not: 'cancelled' } } }),
+      prisma.order.aggregate({
+        where: { status: { not: 'cancelled' } },
+        _sum: { total: true },
+      }),
+      prisma.order.count({ where: { createdAt: { gte: today }, status: { not: 'cancelled' } } }),
+      prisma.order.aggregate({
+        where: { createdAt: { gte: today }, status: { not: 'cancelled' } },
+        _sum: { total: true },
+      }),
+      prisma.order.count({ where: { status: 'pending' } }),
+      prisma.product.count({ where: { active: true } }),
+      prisma.user.count(),
+    ]);
+
+    const recentOrders = await prisma.order.findMany({
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      include: { items: true },
+    });
+
+    res.json({
+      totalOrders,
+      totalRevenue: totalRevenue._sum.total || 0,
+      todayOrders,
+      todayRevenue: todayRevenue._sum.total || 0,
+      pendingOrders,
+      totalProducts,
+      totalCustomers,
+      recentOrders,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /orders/:id - Detalle de pedido
 router.get('/:id', authenticate, async (req, res, next) => {
   try {
@@ -58,8 +109,7 @@ router.get('/:id', authenticate, async (req, res, next) => {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
-    // Clientes solo pueden ver sus pedidos
-    if (req.user.role === 'customer' && order.userId && order.userId !== req.user.id) {
+    if (!req.user.roles.includes('admin') && order.userId && order.userId !== req.user.id) {
       return res.status(403).json({ error: 'No tienes permisos para ver este pedido' });
     }
 
@@ -69,8 +119,8 @@ router.get('/:id', authenticate, async (req, res, next) => {
   }
 });
 
-// POST /orders - Crear pedido (cualquier usuario autenticado)
-router.post('/', authenticate, async (req, res, next) => {
+// POST /orders - Crear pedido (requiere permiso orders.create)
+router.post('/', authenticate, requirePermission('orders.create'), async (req, res, next) => {
   try {
     const { customer, items, total, totalItems } = req.body;
 
@@ -109,7 +159,6 @@ router.post('/', authenticate, async (req, res, next) => {
         include: { items: true },
       });
 
-      // Descontar stock
       for (const item of items) {
         if (item.id) {
           await tx.product.update({
@@ -131,8 +180,8 @@ router.post('/', authenticate, async (req, res, next) => {
   }
 });
 
-// PUT /orders/:id/status - Actualizar estado del pedido (solo admin)
-router.put('/:id/status', authenticate, authorize('admin'), async (req, res, next) => {
+// PUT /orders/:id/status - Actualizar estado del pedido (requiere permiso orders.edit)
+router.put('/:id/status', authenticate, requirePermission('orders.edit'), async (req, res, next) => {
   try {
     const orderId = parseInt(req.params.id);
     const { status } = req.body;
@@ -164,8 +213,8 @@ router.put('/:id/status', authenticate, authorize('admin'), async (req, res, nex
   }
 });
 
-// DELETE /orders/:id - Cancelar/Eliminar pedido
-router.delete('/:id', authenticate, async (req, res, next) => {
+// DELETE /orders/:id - Cancelar/Eliminar pedido (requiere permiso orders.delete)
+router.delete('/:id', authenticate, requirePermission('orders.delete'), async (req, res, next) => {
   try {
     const orderId = parseInt(req.params.id);
 
@@ -178,19 +227,16 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       return res.status(404).json({ error: 'Pedido no encontrado' });
     }
 
-    // Solo admin o el dueño pueden cancelar
-    if (req.user.role !== 'admin' && order.userId !== req.user.id) {
+    if (!req.user.roles.includes('admin') && order.userId !== req.user.id) {
       return res.status(403).json({ error: 'No tienes permisos para cancelar este pedido' });
     }
 
-    // Solo se pueden cancelar pedidos pendientes o confirmados
     if (!['pending', 'confirmed'].includes(order.status)) {
       return res.status(400).json({
         error: 'Solo se pueden cancelar pedidos pendientes o confirmados',
       });
     }
 
-    // Restaurar stock
     await prisma.$transaction(async (tx) => {
       for (const item of order.items) {
         if (item.productId) {
@@ -208,58 +254,6 @@ router.delete('/:id', authenticate, async (req, res, next) => {
     });
 
     res.json({ message: 'Pedido cancelado y stock restaurado' });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /orders/stats/dashboard - Estadísticas (solo admin)
-router.get('/stats/dashboard', authenticate, authorize('admin'), async (req, res, next) => {
-  try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const [
-      totalOrders,
-      totalRevenue,
-      todayOrders,
-      todayRevenue,
-      pendingOrders,
-      totalProducts,
-      totalCustomers,
-    ] = await Promise.all([
-      prisma.order.count({ where: { status: { not: 'cancelled' } } }),
-      prisma.order.aggregate({
-        where: { status: { not: 'cancelled' } },
-        _sum: { total: true },
-      }),
-      prisma.order.count({ where: { createdAt: { gte: today }, status: { not: 'cancelled' } } }),
-      prisma.order.aggregate({
-        where: { createdAt: { gte: today }, status: { not: 'cancelled' } },
-        _sum: { total: true },
-      }),
-      prisma.order.count({ where: { status: 'pending' } }),
-      prisma.product.count({ where: { active: true } }),
-      prisma.user.count({ where: { role: 'customer' } }),
-    ]);
-
-    // Últimos pedidos
-    const recentOrders = await prisma.order.findMany({
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: { items: true },
-    });
-
-    res.json({
-      totalOrders,
-      totalRevenue: totalRevenue._sum.total || 0,
-      todayOrders,
-      todayRevenue: todayRevenue._sum.total || 0,
-      pendingOrders,
-      totalProducts,
-      totalCustomers,
-      recentOrders,
-    });
   } catch (err) {
     next(err);
   }

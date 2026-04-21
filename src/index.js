@@ -6,6 +6,7 @@ import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
 import ordersRouter from './routes/orders.js';
+import adminRouter from './routes/admin.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,6 +22,7 @@ app.use(express.json({ limit: '10mb' }));
 
 // Rutas de la API
 app.use('/auth', authRouter);
+app.use('/auth', adminRouter); // Sub-rutas: /auth/permissions, /auth/roles, /auth/users
 app.use('/products', productsRouter);
 app.use('/categories', categoriesRouter);
 app.use('/orders', ordersRouter);
@@ -30,7 +32,7 @@ app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
     service: 'JO-backend-shop',
-    version: '2.0.0',
+    version: '3.0.0',
     timestamp: new Date().toISOString(),
   });
 });
@@ -39,7 +41,7 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     message: 'JO-backend-shop API',
-    version: '2.0.0',
+    version: '3.0.0',
     auth: {
       register: 'POST /auth/register',
       login: 'POST /auth/login',
@@ -47,26 +49,37 @@ app.get('/', (req, res) => {
       profile: 'GET /auth/me',
       updateProfile: 'PUT /auth/profile',
     },
+    admin: {
+      permissions: 'GET /auth/permissions (admin)',
+      roles: 'GET /auth/roles (admin)',
+      createRole: 'POST /auth/roles (admin)',
+      updateRole: 'PUT /auth/roles/:id (admin)',
+      deleteRole: 'DELETE /auth/roles/:id (admin)',
+      users: 'GET /auth/users (admin)',
+      assignRoles: 'PUT /auth/users/:id/roles (admin)',
+      grantPermission: 'POST /auth/users/:id/permissions (admin)',
+      revokePermission: 'DELETE /auth/users/:id/permissions/:permissionId (admin)',
+    },
     products: {
       list: 'GET /products',
       detail: 'GET /products/:id',
       search: 'GET /products/search?q=query',
-      create: 'POST /products (admin)',
-      update: 'PUT /products/:id (admin)',
-      delete: 'DELETE /products/:id (admin)',
+      create: 'POST /products (products.create)',
+      update: 'PUT /products/:id (products.edit)',
+      delete: 'DELETE /products/:id (products.delete)',
     },
     categories: {
       list: 'GET /categories',
-      create: 'POST /categories (admin)',
-      update: 'PUT /categories/:id (admin)',
-      delete: 'DELETE /categories/:id (admin)',
+      create: 'POST /categories (categories.create)',
+      update: 'PUT /categories/:id (categories.edit)',
+      delete: 'DELETE /categories/:id (categories.delete)',
     },
     orders: {
       list: 'GET /orders',
-      create: 'POST /orders',
-      updateStatus: 'PUT /orders/:id/status (admin)',
-      cancel: 'DELETE /orders/:id',
-      dashboard: 'GET /orders/stats/dashboard (admin)',
+      create: 'POST /orders (orders.create)',
+      updateStatus: 'PUT /orders/:id/status (orders.edit)',
+      cancel: 'DELETE /orders/:id (orders.delete)',
+      dashboard: 'GET /orders/stats/dashboard (dashboard.view)',
     },
   });
 });
@@ -82,7 +95,7 @@ app.use((err, req, res, next) => {
 // Iniciar servidor (solo local, no en Vercel)
 if (process.env.NODE_ENV !== 'production' || !process.env.VERCEL) {
   app.listen(PORT, () => {
-    console.log(`\n  JO-backend-shop v2.0.0`);
+    console.log(`\n  JO-backend-shop v3.0.0`);
     console.log(`  Puerto: ${PORT}`);
     console.log(`  Health: http://localhost:${PORT}/health\n`);
   });

@@ -3,26 +3,167 @@ import bcrypt from 'bcryptjs';
 
 const prisma = new PrismaClient();
 
+// ─── Permisos por módulo ───────────────────────────────────────────────────────
+const MODULES = {
+  products: {
+    name: 'Productos',
+    permissions: [
+      { name: 'Ver menú Productos', code: 'products.view_menu', description: 'Permite ver el módulo de productos en el menú' },
+      { name: 'Leer productos', code: 'products.read', description: 'Permite ver la lista y detalle de productos' },
+      { name: 'Crear productos', code: 'products.create', description: 'Permite crear nuevos productos' },
+      { name: 'Editar productos', code: 'products.edit', description: 'Permite editar productos existentes' },
+      { name: 'Eliminar productos', code: 'products.delete', description: 'Permite eliminar productos' },
+    ],
+  },
+  categories: {
+    name: 'Categorías',
+    permissions: [
+      { name: 'Ver menú Categorías', code: 'categories.view_menu', description: 'Permite ver el módulo de categorías en el menú' },
+      { name: 'Leer categorías', code: 'categories.read', description: 'Permite ver la lista de categorías' },
+      { name: 'Crear categorías', code: 'categories.create', description: 'Permite crear nuevas categorías' },
+      { name: 'Editar categorías', code: 'categories.edit', description: 'Permite editar categorías existentes' },
+      { name: 'Eliminar categorías', code: 'categories.delete', description: 'Permite eliminar categorías' },
+    ],
+  },
+  orders: {
+    name: 'Pedidos',
+    permissions: [
+      { name: 'Ver menú Pedidos', code: 'orders.view_menu', description: 'Permite ver el módulo de pedidos en el menú' },
+      { name: 'Leer pedidos', code: 'orders.read', description: 'Permite ver la lista y detalle de pedidos' },
+      { name: 'Crear pedidos', code: 'orders.create', description: 'Permite crear nuevos pedidos' },
+      { name: 'Editar pedidos', code: 'orders.edit', description: 'Permite cambiar estado de pedidos' },
+      { name: 'Eliminar pedidos', code: 'orders.delete', description: 'Permite cancelar/eliminar pedidos' },
+    ],
+  },
+  users: {
+    name: 'Usuarios',
+    permissions: [
+      { name: 'Ver menú Usuarios', code: 'users.view_menu', description: 'Permite ver el módulo de usuarios en el menú' },
+      { name: 'Leer usuarios', code: 'users.read', description: 'Permite ver la lista de usuarios' },
+      { name: 'Crear usuarios', code: 'users.create', description: 'Permite crear nuevos usuarios' },
+      { name: 'Editar usuarios', code: 'users.edit', description: 'Permite editar datos de usuarios' },
+      { name: 'Eliminar usuarios', code: 'users.delete', description: 'Permite desactivar/eliminar usuarios' },
+    ],
+  },
+  dashboard: {
+    name: 'Dashboard',
+    permissions: [
+      { name: 'Ver menú Dashboard', code: 'dashboard.view_menu', description: 'Permite ver el módulo del panel principal' },
+      { name: 'Ver Dashboard', code: 'dashboard.view', description: 'Permite acceder al panel principal con estadísticas' },
+    ],
+  },
+};
+
 async function main() {
   console.log('🌱 Seeding database...\n');
 
-  // Limpiar datos existentes
+  // ─── Limpiar datos existentes (orden por dependencias) ─────────────────────
+  await prisma.userPermission.deleteMany();
+  await prisma.rolePermission.deleteMany();
+  await prisma.userRole.deleteMany();
   await prisma.orderItem.deleteMany();
   await prisma.order.deleteMany();
   await prisma.product.deleteMany();
   await prisma.category.deleteMany();
   await prisma.user.deleteMany();
+  await prisma.permission.deleteMany();
+  await prisma.role.deleteMany();
 
-  // Crear usuarios
+  // ─── Crear permisos ───────────────────────────────────────────────────────
+  const allPermissions = [];
+  for (const [module, config] of Object.entries(MODULES)) {
+    for (const perm of config.permissions) {
+      const created = await prisma.permission.create({
+        data: {
+          name: perm.name,
+          code: perm.code,
+          module,
+          description: perm.description,
+        },
+      });
+      allPermissions.push(created);
+    }
+  }
+  console.log(`✅ ${allPermissions.length} permisos creados (${Object.keys(MODULES).length} módulos)`);
+
+  // ─── Crear roles ──────────────────────────────────────────────────────────
+  const adminRole = await prisma.role.create({
+    data: {
+      name: 'admin',
+      description: 'Administrador total del sistema. Acceso completo a todos los módulos.',
+      active: true,
+    },
+  });
+
+  const customerRole = await prisma.role.create({
+    data: {
+      name: 'customer',
+      description: 'Cliente. Puede ver productos, crear pedidos y ver sus propios pedidos.',
+      active: true,
+    },
+  });
+
+  const editorRole = await prisma.role.create({
+    data: {
+      name: 'editor',
+      description: 'Editor. Puede gestionar productos y categorías pero no usuarios ni pedidos.',
+      active: true,
+    },
+  });
+
+  console.log(`✅ 3 roles creados: admin, customer, editor`);
+
+  // ─── Asignar permisos a roles ─────────────────────────────────────────────
+
+  // Admin: TODOS los permisos
+  const allPermCodes = allPermissions.map(p => p.code);
+  await prisma.rolePermission.createMany({
+    data: allPermissions.map(p => ({
+      roleId: adminRole.id,
+      permissionId: p.id,
+    })),
+  });
+
+  // Customer: solo leer y crear pedidos, ver menú de productos/categorías
+  const customerPermCodes = [
+    'products.view_menu', 'products.read',
+    'categories.view_menu', 'categories.read',
+    'orders.view_menu', 'orders.read', 'orders.create', 'orders.delete',
+  ];
+  const customerPerms = allPermissions.filter(p => customerPermCodes.includes(p.code));
+  await prisma.rolePermission.createMany({
+    data: customerPerms.map(p => ({
+      roleId: customerRole.id,
+      permissionId: p.id,
+    })),
+  });
+
+  // Editor: productos y categorías completos + dashboard
+  const editorPermCodes = [
+    'dashboard.view_menu', 'dashboard.view',
+    'products.view_menu', 'products.read', 'products.create', 'products.edit', 'products.delete',
+    'categories.view_menu', 'categories.read', 'categories.create', 'categories.edit', 'categories.delete',
+  ];
+  const editorPerms = allPermissions.filter(p => editorPermCodes.includes(p.code));
+  await prisma.rolePermission.createMany({
+    data: editorPerms.map(p => ({
+      roleId: editorRole.id,
+      permissionId: p.id,
+    })),
+  });
+
+  console.log(`✅ Permisos asignados a roles`);
+
+  // ─── Crear usuarios ───────────────────────────────────────────────────────
   const adminPassword = await bcrypt.hash('Admin123', 12);
   const customerPassword = await bcrypt.hash('Cliente123', 12);
+  const editorPassword = await bcrypt.hash('Editor123', 12);
 
   const admin = await prisma.user.create({
     data: {
       name: 'Administrador',
       email: 'admin@joshop.com',
       password: adminPassword,
-      role: 'admin',
       active: true,
       emailVerified: new Date(),
     },
@@ -33,17 +174,46 @@ async function main() {
       name: 'Cliente Demo',
       email: 'cliente@joshop.com',
       password: customerPassword,
-      role: 'customer',
       active: true,
       emailVerified: new Date(),
     },
   });
 
-  console.log('✅ Usuarios creados:');
-  console.log(`   ADMIN:    ${admin.email} / Admin123`);
-  console.log(`   CLIENTE:  ${customer.email} / Cliente123`);
+  const editor = await prisma.user.create({
+    data: {
+      name: 'Editor Demo',
+      email: 'editor@joshop.com',
+      password: editorPassword,
+      active: true,
+      emailVerified: new Date(),
+    },
+  });
 
-  // Crear categorías
+  console.log('✅ Usuarios creados');
+
+  // ─── Asignar roles a usuarios ─────────────────────────────────────────────
+  await prisma.userRole.createMany([
+    { userId: admin.id, roleId: adminRole.id },
+    { userId: customer.id, roleId: customerRole.id },
+    { userId: editor.id, roleId: editorRole.id },
+  ]);
+
+  console.log('✅ Roles asignados a usuarios');
+
+  // ─── Ejemplo de permiso directo a usuario ─────────────────────────────────
+  // Le damos al editor permiso directo para ver pedidos (aunque su rol no lo tenga)
+  const ordersViewMenu = allPermissions.find(p => p.code === 'orders.view_menu');
+  if (ordersViewMenu) {
+    await prisma.userPermission.create({
+      data: {
+        userId: editor.id,
+        permissionId: ordersViewMenu.id,
+      },
+    });
+    console.log('✅ Permiso directo "orders.view_menu" asignado al editor');
+  }
+
+  // ─── Crear categorías ────────────────────────────────────────────────────
   const categories = await Promise.all([
     prisma.category.create({ data: { name: 'Electrónica', slug: 'electronica' } }),
     prisma.category.create({ data: { name: 'Ropa', slug: 'ropa' } }),
@@ -52,9 +222,9 @@ async function main() {
     prisma.category.create({ data: { name: 'Deportes', slug: 'deportes' } }),
   ]);
 
-  console.log(`\n✅ ${categories.length} categorías creadas`);
+  console.log(`✅ ${categories.length} categorías creadas`);
 
-  // Crear productos
+  // ─── Crear productos ─────────────────────────────────────────────────────
   const productsData = [
     { name: 'Auriculares Bluetooth Pro', slug: 'auriculares-bluetooth-pro', description: 'Auriculares inalámbricos con cancelación de ruido activa, batería de 30 horas y sonido Hi-Fi.', price: 49.99, image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400', thumbnail: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=150', stock: 45, categoryId: categories[0].id },
     { name: 'Smart Watch Fitness', slug: 'smart-watch-fitness', description: 'Reloj inteligente con monitor cardíaco, GPS integrado y más de 100 modos de deporte.', price: 129.99, image: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400', thumbnail: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=150', stock: 28, categoryId: categories[0].id },
@@ -81,17 +251,26 @@ async function main() {
 
   console.log(`✅ ${createdProducts.length} productos creados`);
 
+  // ─── Resumen ──────────────────────────────────────────────────────────────
   const totalStock = createdProducts.reduce((sum, p) => sum + p.stock, 0);
 
   console.log(`\n📊 Resumen general:`);
-  console.log(`   Usuarios: 2 (1 admin, 1 customer)`);
+  console.log(`   Roles: 3 (admin, customer, editor)`);
+  console.log(`   Permisos: ${allPermissions.length} (${Object.keys(MODULES).length} módulos)`);
+  console.log(`   Usuarios: 3`);
   console.log(`   Categorías: ${categories.length}`);
   console.log(`   Productos: ${createdProducts.length}`);
   console.log(`   Stock total: ${totalStock} unidades`);
 
-  console.log('\n🔐 Credenciales de prueba:');
-  console.log('   ADMIN:    admin@joshop.com / Admin123');
-  console.log('   CLIENTE:  cliente@joshop.com / Cliente123');
+  console.log(`\n🔐 Credenciales de prueba:`);
+  console.log(`   ADMIN:   admin@joshop.com / Admin123 (acceso total)`);
+  console.log(`   EDITOR:  editor@joshop.com / Editor123 (productos + categorías)`);
+  console.log(`   CLIENTE: cliente@joshop.com / Cliente123 (solo compra)`);
+
+  console.log(`\n📋 Módulos y permisos:`);
+  for (const [module, config] of Object.entries(MODULES)) {
+    console.log(`   ${config.name}: ${config.permissions.map(p => p.code).join(', ')}`);
+  }
 
   console.log('\n✨ Seed completado exitosamente\n');
 }

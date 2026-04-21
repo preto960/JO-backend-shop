@@ -15,12 +15,13 @@ export const comparePassword = async (password, hash) => {
   return await bcrypt.compare(password, hash);
 };
 
-// Generar token de acceso
-export const generateToken = (user) => {
+// Generar token de acceso con roles y permisos
+export const generateToken = (user, roles = [], permissions = []) => {
   const payload = {
     id: user.id,
     email: user.email,
-    role: user.role,
+    roles: roles.map(r => r.name),
+    permissions: permissions.map(p => p.code),
   };
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 };

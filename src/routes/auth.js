@@ -9,15 +9,31 @@ import {
   validatePassword,
   sanitize,
 } from '../services/auth.js';
+import { getUserPermissions } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Helper: Formatear respuesta del usuario
+const formatUserResponse = async (user) => {
+  const { roles, permissions } = await getUserPermissions(user.id);
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    active: user.active,
+    emailVerified: user.emailVerified,
+    createdAt: user.createdAt,
+    roles,
+    permissions,
+  };
+};
 
 // POST /auth/register - Registro
 router.post('/register', async (req, res, next) => {
   try {
     const { name, email, password, phone } = req.body;
 
-    // Validaciones
     const sanitizedName = sanitize(name);
     const sanitizedEmail = sanitize(email)?.toLowerCase();
 
@@ -50,7 +66,6 @@ router.post('/register', async (req, res, next) => {
       });
     }
 
-    // Verificar si el email ya existe
     const existingUser = await prisma.user.findUnique({
       where: { email: sanitizedEmail },
     });
@@ -70,26 +85,34 @@ router.post('/register', async (req, res, next) => {
         email: sanitizedEmail,
         password: hashedPassword,
         phone: phone ? sanitize(phone) : null,
-        role: 'customer',
         emailVerified: new Date(),
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        phone: true,
-        createdAt: true,
       },
     });
 
-    // Generar tokens
-    const token = generateToken(user);
+    // Asignar rol por defecto: customer
+    const customerRole = await prisma.role.findUnique({ where: { name: 'customer' } });
+    if (customerRole) {
+      await prisma.userRole.create({
+        data: { userId: user.id, roleId: customerRole.id },
+      });
+    }
+
+    // Obtener permisos del usuario
+    const { roles, permissions } = await getUserPermissions(user.id);
+
+    const token = generateToken(user, roles, permissions);
     const refreshToken = generateRefreshToken(user);
 
     res.status(201).json({
       message: 'Cuenta creada exitosamente',
-      user,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        roles,
+        permissions,
+      },
       token,
       refreshToken,
     });
@@ -112,7 +135,6 @@ router.post('/login', async (req, res, next) => {
 
     const sanitizedEmail = sanitize(email)?.toLowerCase();
 
-    // Buscar usuario
     const user = await prisma.user.findUnique({
       where: { email: sanitizedEmail },
     });
@@ -131,7 +153,6 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Verificar contraseña
     const isMatch = await comparePassword(password, user.password);
     if (!isMatch) {
       return res.status(401).json({
@@ -140,8 +161,10 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // Generar tokens
-    const token = generateToken(user);
+    // Obtener roles y permisos
+    const { roles, permissions } = await getUserPermissions(user.id);
+
+    const token = generateToken(user, roles, permissions);
     const refreshToken = generateRefreshToken(user);
 
     res.json({
@@ -150,8 +173,9 @@ router.post('/login', async (req, res, next) => {
         id: user.id,
         name: user.name,
         email: user.email,
-        role: user.role,
         phone: user.phone,
+        roles,
+        permissions,
       },
       token,
       refreshToken,
@@ -172,6 +196,7 @@ router.post('/refresh', async (req, res, next) => {
       });
     }
 
+    const { verifyToken } = await import('../services/auth.js');
     const decoded = verifyToken(token);
     if (!decoded || decoded.valid === false || decoded.type !== 'refresh') {
       return res.status(401).json({
@@ -181,7 +206,7 @@ router.post('/refresh', async (req, res, next) => {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      select: { id: true, email: true, role: true, name: true, active: true },
+      select: { id: true, email: true, active: true },
     });
 
     if (!user || !user.active) {
@@ -190,7 +215,10 @@ router.post('/refresh', async (req, res, next) => {
       });
     }
 
-    const newToken = generateToken(user);
+    // Obtener permisos actualizados
+    const { roles, permissions } = await getUserPermissions(user.id);
+
+    const newToken = generateToken(user, roles, permissions);
     const newRefreshToken = generateRefreshToken(user);
 
     res.json({
@@ -203,7 +231,7 @@ router.post('/refresh', async (req, res, next) => {
   }
 });
 
-// GET /auth/me - Perfil del usuario autenticado
+// GET /auth/me - Perfil del usuario autenticado (con roles y permisos)
 router.get('/me', async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -220,26 +248,23 @@ router.get('/me', async (req, res, next) => {
 
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        phone: true,
-        active: true,
-        emailVerified: true,
-        createdAt: true,
-        _count: {
-          select: { orders: true },
-        },
-      },
     });
 
     if (!user) {
       return res.status(404).json({ error: 'Usuario no encontrado' });
     }
 
-    res.json(user);
+    const userResponse = await formatUserResponse(user);
+
+    // Agregar conteo de pedidos
+    const orderCount = await prisma.order.count({
+      where: { userId: user.id },
+    });
+
+    res.json({
+      ...userResponse,
+      _count: { orders: orderCount },
+    });
   } catch (err) {
     next(err);
   }
@@ -279,7 +304,6 @@ router.put('/profile', async (req, res, next) => {
       updateData.phone = sanitize(phone) || null;
     }
 
-    // Cambiar contraseña
     if (newPassword) {
       if (!currentPassword) {
         return res.status(400).json({
@@ -307,22 +331,17 @@ router.put('/profile', async (req, res, next) => {
       updateData.password = await hashPassword(newPassword);
     }
 
-    const updatedUser = await prisma.user.update({
+    await prisma.user.update({
       where: { id: decoded.id },
       data: updateData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        phone: true,
-        createdAt: true,
-      },
     });
+
+    const updatedUser = await prisma.user.findUnique({ where: { id: decoded.id } });
+    const userResponse = await formatUserResponse(updatedUser);
 
     res.json({
       message: 'Perfil actualizado',
-      user: updatedUser,
+      user: userResponse,
     });
   } catch (err) {
     next(err);

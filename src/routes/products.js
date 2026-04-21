@@ -1,22 +1,23 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
-import { authenticate, authorize, optionalAuth } from '../middleware/auth.js';
+import { authenticate, requirePermission, optionalAuth } from '../middleware/auth.js';
 import { sanitize } from '../services/auth.js';
 
 const router = express.Router();
 
-// GET /products - Listar productos (público)
+// GET /products - Listar productos (lectura pública para auth optional)
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const { page = 1, limit = 20, category, sort = 'newest', active } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     const where = {};
-    // Solo admin puede ver productos inactivos
-    if (req.user?.role !== 'admin') {
+    if (req.user && req.user.roles.includes('admin')) {
+      if (active !== undefined) {
+        where.active = active === 'true';
+      }
+    } else {
       where.active = true;
-    } else if (active !== undefined) {
-      where.active = active === 'true';
     }
 
     if (category) {
@@ -119,12 +120,11 @@ router.get('/:id', async (req, res, next) => {
   }
 });
 
-// POST /products - Crear producto (solo admin)
-router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
+// POST /products - Crear producto (requiere permiso products.create)
+router.post('/', authenticate, requirePermission('products.create'), async (req, res, next) => {
   try {
     const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
 
-    // Validaciones
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
     }
@@ -135,19 +135,16 @@ router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
       return res.status(400).json({ error: 'Categoría requerida', field: 'categoryId' });
     }
 
-    // Verificar categoría
     const category = await prisma.category.findUnique({ where: { id: parseInt(categoryId) } });
     if (!category) {
       return res.status(404).json({ error: 'Categoría no encontrada', field: 'categoryId' });
     }
 
-    // Generar slug
     const slug = sanitize(name)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
 
-    // Verificar slug único
     const existingSlug = await prisma.product.findUnique({ where: { slug } });
     const finalSlug = existingSlug ? `${slug}-${Date.now()}` : slug;
 
@@ -175,8 +172,8 @@ router.post('/', authenticate, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// PUT /products/:id - Actualizar producto (solo admin)
-router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+// PUT /products/:id - Actualizar producto (requiere permiso products.edit)
+router.put('/:id', authenticate, requirePermission('products.edit'), async (req, res, next) => {
   try {
     const productId = parseInt(req.params.id);
 
@@ -186,7 +183,6 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
     }
 
     const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
-
     const updateData = {};
 
     if (name !== undefined) {
@@ -237,8 +233,8 @@ router.put('/:id', authenticate, authorize('admin'), async (req, res, next) => {
   }
 });
 
-// DELETE /products/:id - Eliminar producto (solo admin)
-router.delete('/:id', authenticate, authorize('admin'), async (req, res, next) => {
+// DELETE /products/:id - Eliminar producto (requiere permiso products.delete)
+router.delete('/:id', authenticate, requirePermission('products.delete'), async (req, res, next) => {
   try {
     const productId = parseInt(req.params.id);
 
