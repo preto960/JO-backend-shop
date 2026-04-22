@@ -249,3 +249,20 @@ model PushToken {
   @@index([userId])
   @@map("push_tokens")
 }
+
+// ─── OTP VERIFICATION ────────────────────────────────────────────────────
+
+model OtpVerification {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  email     String   @db.VarChar(200)
+  code      String   @db.VarChar(10)
+  type      String   @default("login") @db.VarChar(20) // login, register, reset
+  verified  Boolean  @default(false)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([email])
+  @@index([userId])
+  @@map("otp_verifications")
+}

@@ -10,6 +10,7 @@ import {
   sanitize,
 } from '../services/auth.js';
 import { getUserPermissions } from '../middleware/auth.js';
+import { sendWelcomeEmail } from '../services/email.js';
 
 const router = express.Router();
 
@@ -121,6 +122,9 @@ router.post('/register', async (req, res, next) => {
       token,
       refreshToken,
     });
+
+    // Enviar correo de bienvenida (fire & forget)
+    sendWelcomeEmail({ name: user.name, email: user.email }).catch(() => {});
   } catch (err) {
     next(err);
   }
