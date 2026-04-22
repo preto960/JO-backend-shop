@@ -55,7 +55,32 @@ router.get('/', authenticate, async (req, res, next) => {
   }
 });
 
-// ⚠️ ESTA RUTA DEBE IR ANTES DE /:id PARA EVITAR CONFLICTO
+// ⚠️ RUTAS CON PATH ESPECÍFICO DEBEN IR ANTES DE /:id PARA EVITAR CONFLICTO
+
+// GET /orders/available - Pedidos disponibles para que delivery acepte (sin asignar)
+router.get('/available', authenticate, requirePermission('delivery.accept'), async (req, res, next) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        status: { in: ['confirmed', 'pending'] },
+        deliveryId: null,
+      },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        items: true,
+        user: { select: { id: true, name: true, phone: true } },
+      },
+    });
+
+    res.json({
+      data: orders,
+      total: orders.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /orders/stats/dashboard - Estadísticas (requiere permiso dashboard.view)
 router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view'), async (req, res, next) => {
   try {
@@ -214,30 +239,6 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
     res.status(201).json({
       message: 'Pedido creado exitosamente',
       order,
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /orders/available - Pedidos disponibles para que delivery acepte (sin asignar)
-router.get('/available', authenticate, requirePermission('delivery.accept'), async (req, res, next) => {
-  try {
-    const orders = await prisma.order.findMany({
-      where: {
-        status: { in: ['confirmed', 'pending'] },
-        deliveryId: null,
-      },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        items: true,
-        user: { select: { id: true, name: true, phone: true } },
-      },
-    });
-
-    res.json({
-      data: orders,
-      total: orders.length,
     });
   } catch (err) {
     next(err);
