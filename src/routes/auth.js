@@ -24,6 +24,7 @@ const formatUserResponse = async (user) => {
     phone: user.phone,
     birthdate: user.birthdate,
     active: user.active,
+    twoFactorEnabled: user.twoFactorEnabled || false,
     emailVerified: user.emailVerified,
     createdAt: user.createdAt,
     roles,
@@ -170,40 +171,62 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // === 2FA: Generar y enviar OTP ===
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    // === 2FA: Solo si el usuario lo tiene activado ===
+    if (user.twoFactorEnabled) {
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    // Eliminar OTPs anteriores para este email+tipo
-    await prisma.otpVerification.deleteMany({
-      where: { email: user.email, type: 'login' },
-    });
+      // Eliminar OTPs anteriores para este email+tipo
+      await prisma.otpVerification.deleteMany({
+        where: { email: user.email, type: 'login' },
+      });
 
-    // Crear nuevo OTP
-    await prisma.otpVerification.create({
-      data: {
-        userId: user.id,
+      // Crear nuevo OTP
+      await prisma.otpVerification.create({
+        data: {
+          userId: user.id,
+          email: user.email,
+          code: otpCode,
+          type: 'login',
+          expiresAt,
+        },
+      });
+
+      // Enviar OTP por email
+      if (isEmailConfigured()) {
+        await sendOtpEmail({ to: user.email, code: otpCode, type: 'login' });
+      } else {
+        console.log(`[2FA] SMTP no configurado. Codigo para ${user.email}: ${otpCode}`);
+      }
+
+      return res.json({
+        requiresOtp: true,
         email: user.email,
-        code: otpCode,
-        type: 'login',
-        expiresAt,
-      },
-    });
-
-    // Enviar OTP por email
-    if (isEmailConfigured()) {
-      await sendOtpEmail({ to: user.email, code: otpCode, type: 'login' });
-    } else {
-      console.log(`[2FA] SMTP no configurado. Codigo para ${user.email}: ${otpCode}`);
+        message: isEmailConfigured()
+          ? 'Codigo de verificacion enviado a tu email'
+          : 'Codigo generado (SMTP no configurado)',
+        ...(process.env.NODE_ENV !== 'production' && { code: otpCode }),
+      });
     }
 
+    // === Login normal (sin 2FA) ===
+    const { roles, permissions } = await getUserPermissions(user.id);
+    const token = generateToken(user, roles, permissions);
+    const refreshToken = generateRefreshToken(user);
+
     res.json({
-      requiresOtp: true,
-      email: user.email,
-      message: isEmailConfigured()
-        ? 'Codigo de verificacion enviado a tu email'
-        : 'Codigo generado (SMTP no configurado)',
-      ...(process.env.NODE_ENV !== 'production' && { code: otpCode }),
+      message: 'Inicio de sesion exitoso',
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        twoFactorEnabled: user.twoFactorEnabled || false,
+        roles,
+        permissions,
+      },
+      token,
+      refreshToken,
     });
   } catch (err) {
     next(err);
@@ -443,6 +466,61 @@ router.put('/profile', async (req, res, next) => {
     res.json({
       message: 'Perfil actualizado',
       user: userResponse,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /auth/two-factor - Activar/desactivar autenticacion en 2 pasos
+router.put('/two-factor', async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    const { verifyToken } = await import('../services/auth.js');
+    const decoded = verifyToken(authHeader.split(' ')[1]);
+    if (!decoded || decoded.valid === false) {
+      return res.status(401).json({ error: 'Token invalido' });
+    }
+
+    const { enabled } = req.body;
+
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({
+        error: 'El campo "enabled" es requerido (true/false)',
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, twoFactorEnabled: true },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    // Si esta activando 2FA y SMTP no esta configurado, avisar
+    if (enabled && !isEmailConfigured()) {
+      return res.status(400).json({
+        error: 'No se puede activar la autenticacion en 2 pasos. El servidor de correos no esta configurado. Contacta al administrador.',
+        code: 'SMTP_NOT_CONFIGURED',
+      });
+    }
+
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { twoFactorEnabled: enabled },
+    });
+
+    res.json({
+      message: enabled
+        ? 'Autenticacion en 2 pasos activada'
+        : 'Autenticacion en 2 pasos desactivada',
+      twoFactorEnabled: enabled,
     });
   } catch (err) {
     next(err);

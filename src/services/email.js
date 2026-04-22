@@ -30,7 +30,7 @@ function getTransporter() {
   return transporter;
 }
 
-function isEmailConfigured() {
+export function isEmailConfigured() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 }
 
