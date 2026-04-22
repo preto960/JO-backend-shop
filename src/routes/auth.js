@@ -33,10 +33,11 @@ const formatUserResponse = async (user) => {
 // POST /auth/register - Registro
 router.post('/register', async (req, res, next) => {
   try {
-    const { name, email, password, phone, birthdate } = req.body;
+    const { name, email, password, phone, birthdate, role } = req.body;
 
     const sanitizedName = sanitize(name);
     const sanitizedEmail = sanitize(email)?.toLowerCase();
+    const sanitizedRole = sanitize(role)?.toLowerCase();
 
     if (!sanitizedName || sanitizedName.length < 2) {
       return res.status(400).json({
@@ -91,11 +92,13 @@ router.post('/register', async (req, res, next) => {
       },
     });
 
-    // Asignar rol por defecto: customer
-    const customerRole = await prisma.role.findUnique({ where: { name: 'customer' } });
-    if (customerRole) {
+    // Asignar rol: delivery o customer (por defecto)
+    const allowedRoles = ['customer', 'delivery'];
+    const targetRole = allowedRoles.includes(sanitizedRole) ? sanitizedRole : 'customer';
+    const assignedRole = await prisma.role.findUnique({ where: { name: targetRole } });
+    if (assignedRole) {
       await prisma.userRole.create({
-        data: { userId: user.id, roleId: customerRole.id },
+        data: { userId: user.id, roleId: assignedRole.id },
       });
     }
 
