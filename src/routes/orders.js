@@ -1,6 +1,12 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission, authorize } from '../middleware/auth.js';
+import {
+  notifyNewOrder,
+  notifyDeliveryAssigned,
+  notifyOrderAccepted,
+  notifyOrderStatusChange,
+} from '../services/notifications.js';
 
 const router = express.Router();
 
@@ -240,6 +246,9 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
       message: 'Pedido creado exitosamente',
       order,
     });
+
+    // Notificar a admins/editores sobre nuevo pedido (fire & forget)
+    notifyNewOrder(order).catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -310,6 +319,11 @@ router.post('/:id/accept', authenticate, requirePermission('delivery.accept'), a
       message: 'Pedido aceptado correctamente',
       order: updated,
     });
+
+    // Notificar al cliente que su pedido fue aceptado (fire & forget)
+    notifyOrderAccepted(updated, updated.delivery?.name).catch(() => {});
+    // Notificar a admins que el pedido fue tomado (fire & forget)
+    notifyOrderStatusChange(updated, 'shipped').catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -372,6 +386,11 @@ router.put('/:id/status', authenticate, async (req, res, next) => {
       message: 'Estado del pedido actualizado',
       order: updated,
     });
+
+    // Notificar al cliente sobre cambio de estado (fire & forget)
+    if (updated.userId) {
+      notifyOrderStatusChange(updated, status).catch(() => {});
+    }
   } catch (err) {
     next(err);
   }
@@ -430,6 +449,13 @@ router.put('/:id/assign', authenticate, async (req, res, next) => {
       message: 'Delivery asignado correctamente',
       order: updated,
     });
+
+    // Notificar al delivery asignado (fire & forget)
+    notifyDeliveryAssigned(updated).catch(() => {});
+    // Notificar al cliente que su pedido fue confirmado (fire & forget)
+    if (updated.userId) {
+      notifyOrderStatusChange(updated, 'confirmed').catch(() => {});
+    }
   } catch (err) {
     next(err);
   }
@@ -483,6 +509,11 @@ router.delete('/:id', authenticate, async (req, res, next) => {
     });
 
     res.json({ message: 'Pedido cancelado y stock restaurado' });
+
+    // Notificar al cliente sobre cancelacion (fire & forget)
+    if (order.userId) {
+      notifyOrderStatusChange(order, 'cancelled').catch(() => {});
+    }
   } catch (err) {
     next(err);
   }

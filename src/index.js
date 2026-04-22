@@ -9,6 +9,7 @@ import ordersRouter from './routes/orders.js';
 import addressesRouter from './routes/addresses.js';
 import adminRouter from './routes/admin.js';
 import storesRouter from './routes/stores.js';
+import notificationsRouter from './routes/notifications.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -30,6 +31,7 @@ app.use('/categories', categoriesRouter);
 app.use('/orders', ordersRouter);
 app.use('/addresses', addressesRouter);
 app.use('/stores', storesRouter);
+app.use('/notifications', notificationsRouter);
 
 // Health check
 app.get('/health', (req, res) => {

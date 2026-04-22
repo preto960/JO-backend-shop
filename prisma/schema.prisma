@@ -94,6 +94,7 @@ model User {
   roles       UserRole[]
   permissions UserPermission[]
   ownedStore  Store?     @relation("StoreOwner")
+  pushTokens  PushToken[]
 
   @@index([email])
   @@index([active])
@@ -230,4 +231,21 @@ model OrderItem {
 
   @@index([orderId])
   @@map("order_items")
+}
+
+// ─── PUSH NOTIFICATION TOKENS ────────────────────────────────────────────
+
+model PushToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  token     String   @db.VarChar(500)
+  platform  String   @default("android") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("push_tokens")
 }
