@@ -10,7 +10,7 @@ import {
   sanitize,
 } from '../services/auth.js';
 import { getUserPermissions } from '../middleware/auth.js';
-import { sendWelcomeEmail } from '../services/email.js';
+import { sendWelcomeEmail, sendOtpEmail, isEmailConfigured } from '../services/email.js';
 
 const router = express.Router();
 
@@ -167,6 +167,94 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({
         error: 'Credenciales inválidas',
         code: 'INVALID_CREDENTIALS',
+      });
+    }
+
+    // === 2FA: Generar y enviar OTP ===
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    // Eliminar OTPs anteriores para este email+tipo
+    await prisma.otpVerification.deleteMany({
+      where: { email: user.email, type: 'login' },
+    });
+
+    // Crear nuevo OTP
+    await prisma.otpVerification.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        code: otpCode,
+        type: 'login',
+        expiresAt,
+      },
+    });
+
+    // Enviar OTP por email
+    if (isEmailConfigured()) {
+      await sendOtpEmail({ to: user.email, code: otpCode, type: 'login' });
+    } else {
+      console.log(`[2FA] SMTP no configurado. Codigo para ${user.email}: ${otpCode}`);
+    }
+
+    res.json({
+      requiresOtp: true,
+      email: user.email,
+      message: isEmailConfigured()
+        ? 'Codigo de verificacion enviado a tu email'
+        : 'Codigo generado (SMTP no configurado)',
+      ...(process.env.NODE_ENV !== 'production' && { code: otpCode }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/login-verify - Verificar OTP y completar login
+router.post('/login-verify', async (req, res, next) => {
+  try {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+      return res.status(400).json({
+        error: 'Email y codigo son requeridos',
+      });
+    }
+
+    const sanitizedEmail = sanitize(email)?.toLowerCase();
+
+    // Buscar OTP valido
+    const otp = await prisma.otpVerification.findFirst({
+      where: {
+        email: sanitizedEmail,
+        code,
+        type: 'login',
+        verified: false,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!otp) {
+      return res.status(400).json({
+        error: 'Codigo invalido, expirado o ya verificado',
+        code: 'INVALID_OTP',
+      });
+    }
+
+    // Marcar OTP como verificado
+    await prisma.otpVerification.update({
+      where: { id: otp.id },
+      data: { verified: true },
+    });
+
+    // Buscar usuario
+    const user = await prisma.user.findUnique({
+      where: { email: sanitizedEmail },
+    });
+
+    if (!user || !user.active) {
+      return res.status(401).json({
+        error: 'Usuario no encontrado o inactivo',
       });
     }
 
