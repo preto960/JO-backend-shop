@@ -71,16 +71,32 @@ export async function sendToUser(userId, { title, body, data = {} }) {
     const successCount = response.successCount;
     const failureCount = response.failureCount;
 
-    // Limpiar tokens invalidos
-    if (failureCount > 0) {
-      const invalidTokens = response.responses
-        .filter((r, i) => !r.success && r.error?.code === 'messaging/registration-token-not-registered')
-        .map((_, i) => tokenList[i]);
+    // Log detallado de errores y limpiar tokens invalidos
+    const INVALID_TOKEN_CODES = [
+      'messaging/registration-token-not-registered',
+      'messaging/invalid-registration-token',
+    ];
+    const tokensToDelete = [];
 
-      if (invalidTokens.length > 0) {
+    if (failureCount > 0) {
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success && resp.error) {
+          console.error(`[Notifications] User ${userId} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
+          if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
+            tokensToDelete.push(tokenList[idx]);
+          }
+        }
+      });
+    }
+
+    if (tokensToDelete.length > 0) {
+      try {
         await prisma.pushToken.deleteMany({
-          where: { token: { in: invalidTokens } },
+          where: { token: { in: tokensToDelete } },
         });
+        console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos del user ${userId}`);
+      } catch (delErr) {
+        console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
       }
     }
 
@@ -129,16 +145,32 @@ export async function sendToRole(roleName, { title, body, data = {} }) {
     const successCount = response.successCount;
     const failureCount = response.failureCount;
 
-    // Limpiar tokens invalidos
-    if (failureCount > 0) {
-      const invalidTokens = response.responses
-        .filter((r, i) => !r.success && r.error?.code === 'messaging/registration-token-not-registered')
-        .map((_, i) => tokenList[i]);
+    // Log detallado de errores y limpiar tokens invalidos
+    const INVALID_TOKEN_CODES = [
+      'messaging/registration-token-not-registered',
+      'messaging/invalid-registration-token',
+    ];
+    const tokensToDelete = [];
 
-      if (invalidTokens.length > 0) {
+    if (failureCount > 0) {
+      response.responses.forEach((resp, idx) => {
+        if (!resp.success && resp.error) {
+          console.error(`[Notifications] Rol ${roleName} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
+          if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
+            tokensToDelete.push(tokenList[idx]);
+          }
+        }
+      });
+    }
+
+    if (tokensToDelete.length > 0) {
+      try {
         await prisma.pushToken.deleteMany({
-          where: { token: { in: invalidTokens } },
+          where: { token: { in: tokensToDelete } },
         });
+        console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos del rol ${roleName}`);
+      } catch (delErr) {
+        console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
       }
     }
 
@@ -190,6 +222,7 @@ export async function notifyNewOrder(order) {
         type: 'new_order',
         orderId: String(order.id),
         screen: 'DeliveryOrders',
+        highlightOrderId: String(order.id),
       },
     })
   );
@@ -206,6 +239,7 @@ export async function notifyDeliveryAssigned(order, deliveryName) {
       type: 'delivery_assigned',
       orderId: String(order.id),
       screen: 'DeliveryOrders',
+      highlightOrderId: String(order.id),
     },
   });
 }
@@ -220,6 +254,7 @@ export async function notifyOrderAccepted(order, deliveryName) {
       type: 'order_accepted',
       orderId: String(order.id),
       screen: 'MyOrders',
+      expandOrderId: String(order.id),
     },
   });
 }
@@ -255,6 +290,7 @@ export async function notifyOrderStatusChange(order, newStatus) {
       orderId: String(order.id),
       newStatus,
       screen: 'MyOrders',
+      expandOrderId: String(order.id),
     },
   });
 }
