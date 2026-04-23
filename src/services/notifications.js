@@ -1,39 +1,9 @@
-import admin from 'firebase-admin';
+import { admin, isInitialized as firebaseReady } from '../config/firebase.js';
 import prisma from '../lib/prisma.js';
-
-// Inicializar Firebase Admin (singleton)
-let firebaseInitialized = false;
-
-function initFirebase() {
-  if (firebaseInitialized) return;
-
-  try {
-    const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT;
-
-    if (!serviceAccount) {
-      console.warn('[Notifications] FIREBASE_SERVICE_ACCOUNT no configurado. Las notificaciones push estaran deshabilitadas.');
-      return;
-    }
-
-    const credentials = JSON.parse(serviceAccount);
-
-    admin.initializeApp({
-      credential: admin.credential.cert(credentials),
-    });
-
-    firebaseInitialized = true;
-    console.log('[Notifications] Firebase Admin inicializado correctamente');
-  } catch (err) {
-    console.error('[Notifications] Error inicializando Firebase:', err.message);
-  }
-}
-
-// Intentar inicializar al importar
-initFirebase();
 
 // Verificar si FCM esta disponible
 function isFcmAvailable() {
-  return firebaseInitialized && admin.apps.length > 0;
+  return firebaseReady && admin.apps.length > 0;
 }
 
 // Obtener tokens de un usuario
@@ -182,7 +152,7 @@ export async function sendToRole(roleName, { title, body, data = {} }) {
 
 // ─── HELPERS ESPECIFICOS PARA EVENTOS DE ORDENES ────────────────────────
 
-// Nuevo pedido creado → notificar a admins/editores
+// Nuevo pedido creado → notificar a admins, editors y deliverys
 export async function notifyNewOrder(order) {
   const promises = [];
 
@@ -194,6 +164,7 @@ export async function notifyNewOrder(order) {
       data: {
         type: 'new_order',
         orderId: String(order.id),
+        screen: 'AdminOrders',
       },
     })
   );
@@ -206,6 +177,19 @@ export async function notifyNewOrder(order) {
       data: {
         type: 'new_order',
         orderId: String(order.id),
+      },
+    })
+  );
+
+  // Notificar a todos los deliverys (para que vean el pedido disponible)
+  promises.push(
+    sendToRole('delivery', {
+      title: 'Nuevo pedido disponible',
+      body: `Pedido #${order.id} - ${order.customerName} - ${order.totalItems} producto(s) - ${order.customerAddr || 'Sin direccion'}`,
+      data: {
+        type: 'new_order',
+        orderId: String(order.id),
+        screen: 'DeliveryOrders',
       },
     })
   );
