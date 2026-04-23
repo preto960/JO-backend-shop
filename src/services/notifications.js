@@ -35,7 +35,8 @@ async function getTokensByRole(roleName) {
 }
 
 // Enviar notificacion push a un usuario especifico
-export async function sendToUser(userId, { title, body, data = {} }) {
+// Soporta: title, body, data, tag (para notificaciones separadas), sound
+export async function sendToUser(userId, { title, body, data = {}, tag = null, sound = 'default' }) {
   if (!isFcmAvailable()) {
     console.log(`[Notifications] FCM no disponible. Notificacion simulada para user ${userId}: "${title}"`);
     return { success: false, reason: 'fcm_not_configured' };
@@ -49,6 +50,16 @@ export async function sendToUser(userId, { title, body, data = {} }) {
 
     const tokenList = tokens.map(t => t.token);
 
+    const androidNotif = {
+      sound,
+      channelId: 'joshop_orders',
+      priority: 'high',
+    };
+    // tag permite que cada notificacion sea independiente (no se sobreescriben)
+    if (tag) {
+      androidNotif.tag = tag;
+    }
+
     const message = {
       notification: { title, body },
       data: {
@@ -58,11 +69,7 @@ export async function sendToUser(userId, { title, body, data = {} }) {
       },
       android: {
         priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'joshop_orders',
-          priority: 'high',
-        },
+        notification: androidNotif,
       },
       tokens: tokenList,
     };
@@ -109,7 +116,8 @@ export async function sendToUser(userId, { title, body, data = {} }) {
 }
 
 // Enviar notificacion a todos los usuarios con un rol
-export async function sendToRole(roleName, { title, body, data = {} }) {
+// Soporta: title, body, data, tag, sound
+export async function sendToRole(roleName, { title, body, data = {}, tag = null, sound = 'default' }) {
   if (!isFcmAvailable()) {
     console.log(`[Notifications] FCM no disponible. Notificacion simulada para rol ${roleName}: "${title}"`);
     return { success: false, reason: 'fcm_not_configured' };
@@ -123,6 +131,15 @@ export async function sendToRole(roleName, { title, body, data = {} }) {
 
     const tokenList = tokens.map(t => t.token);
 
+    const androidNotif = {
+      sound,
+      channelId: 'joshop_orders',
+      priority: 'high',
+    };
+    if (tag) {
+      androidNotif.tag = tag;
+    }
+
     const message = {
       notification: { title, body },
       data: {
@@ -132,11 +149,7 @@ export async function sendToRole(roleName, { title, body, data = {} }) {
       },
       android: {
         priority: 'high',
-        notification: {
-          sound: 'default',
-          channelId: 'joshop_orders',
-          priority: 'high',
-        },
+        notification: androidNotif,
       },
       tokens: tokenList,
     };
@@ -187,17 +200,31 @@ export async function sendToRole(roleName, { title, body, data = {} }) {
 // Nuevo pedido creado → notificar a admins, editors y deliverys
 export async function notifyNewOrder(order) {
   const promises = [];
+  const orderId = String(order.id);
+  const notifTag = `order_${orderId}`;
+
+  // Construir lista de productos para la notificacion del delivery
+  const itemsList = (order.items || []).slice(0, 6).map(
+    (item, idx) => `${idx + 1}. ${item.productName} x${item.quantity}`
+  ).join('\n');
+  const remainingItems = (order.items || []).length - 6;
+  const itemsSuffix = remainingItems > 0 ? `\n... y ${remainingItems} producto(s) mas` : '';
+  const itemsBlock = itemsList + itemsSuffix;
+
+  // Formatear total
+  const totalFormatted = Number(order.total || 0).toFixed(2);
 
   // Notificar a admins
   promises.push(
     sendToRole('admin', {
       title: 'Nuevo pedido recibido',
-      body: `Pedido #${order.id} - ${order.customerName} - ${order.totalItems} producto(s)`,
+      body: `Pedido #${orderId} - ${order.customerName} - ${order.totalItems} producto(s)`,
       data: {
         type: 'new_order',
-        orderId: String(order.id),
+        orderId,
         screen: 'AdminOrders',
       },
+      tag: notifTag,
     })
   );
 
@@ -205,25 +232,28 @@ export async function notifyNewOrder(order) {
   promises.push(
     sendToRole('editor', {
       title: 'Nuevo pedido recibido',
-      body: `Pedido #${order.id} - ${order.customerName}`,
+      body: `Pedido #${orderId} - ${order.customerName}`,
       data: {
         type: 'new_order',
-        orderId: String(order.id),
+        orderId,
       },
+      tag: notifTag,
     })
   );
 
-  // Notificar a todos los deliverys (para que vean el pedido disponible)
+  // Notificar a todos los deliverys con detalle completo de la orden
+  // Incluye: productos, total, direccion, cliente
   promises.push(
     sendToRole('delivery', {
-      title: 'Nuevo pedido disponible',
-      body: `Pedido #${order.id} - ${order.customerName} - ${order.totalItems} producto(s) - ${order.customerAddr || 'Sin direccion'}`,
+      title: `Nuevo pedido #${orderId} disponible`,
+      body: `Cliente: ${order.customerName || 'Cliente'}\n${itemsBlock}\nTotal: ${totalFormatted}\nDir: ${order.customerAddr || 'Sin direccion'}`,
       data: {
         type: 'new_order',
-        orderId: String(order.id),
+        orderId,
         screen: 'DeliveryOrders',
-        highlightOrderId: String(order.id),
+        highlightOrderId: orderId,
       },
+      tag: notifTag,
     })
   );
 
@@ -241,6 +271,7 @@ export async function notifyDeliveryAssigned(order, deliveryName) {
       screen: 'DeliveryOrders',
       highlightOrderId: String(order.id),
     },
+    tag: `order_${order.id}`,
   });
 }
 
@@ -256,6 +287,7 @@ export async function notifyOrderAccepted(order, deliveryName) {
       screen: 'MyOrders',
       expandOrderId: String(order.id),
     },
+    tag: `order_${order.id}`,
   });
 }
 
@@ -292,6 +324,7 @@ export async function notifyOrderStatusChange(order, newStatus) {
       screen: 'MyOrders',
       expandOrderId: String(order.id),
     },
+    tag: `order_${order.id}`,
   });
 }
 
