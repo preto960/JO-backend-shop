@@ -1,22 +1,17 @@
-import { admin, isInitialized as firebaseReady } from '../config/firebase.js';
+// ─── Servicio de Notificaciones (OneSignal) ──────────────────────────────────
+// Migrado desde Firebase FCM a OneSignal.
+// Usa OneSignal REST API via include_external_user_ids (IDs de la DB).
+// La app cliente llama OneSignal.login(userId) al iniciar sesion, lo que
+// asocia el dispositivo con el external_id. El backend no necesita almacenar
+// tokens FCM; OneSignal maneja la relacion internamente.
+
+import oneSignal from './onesignal.js';
 import prisma from '../lib/prisma.js';
 
-// Verificar si FCM esta disponible
-function isFcmAvailable() {
-  return firebaseReady && admin.apps.length > 0;
-}
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-// Obtener tokens de un usuario
-async function getUserTokens(userId) {
-  const tokens = await prisma.pushToken.findMany({
-    where: { userId },
-    select: { token: true, platform: true },
-  });
-  return tokens;
-}
-
-// Obtener tokens de todos los usuarios con un rol especifico
-async function getTokensByRole(roleName) {
+// Obtener IDs de usuarios con un rol especifico
+async function getUserIdsByRole(roleName) {
   const users = await prisma.user.findMany({
     where: {
       active: true,
@@ -24,179 +19,89 @@ async function getTokensByRole(roleName) {
     },
     select: { id: true },
   });
-
-  if (users.length === 0) return [];
-
-  const tokens = await prisma.pushToken.findMany({
-    where: { userId: { in: users.map(u => u.id) } },
-    select: { token: true, platform: true },
-  });
-  return tokens;
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-// Retraso entre reintentos (ms)
-const RETRY_DELAYS = [1000, 2000];
-
-/**
- * Enviar multicast con reintentos automaticos para errores de red (GOAWAY, REFUSED_STREAM, etc.)
- * Estos errores son comunes en Vercel serverless por el manejo de HTTP/2.
- */
-async function sendMulticastWithRetry(message, maxRetries = 2) {
-  let lastError = null;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await admin.messaging().sendEachForMulticast(message);
-      return response;
-    } catch (err) {
-      lastError = err;
-      const isRetryable = err.message?.includes('GOAWAY')
-        || err.message?.includes('REFUSED_STREAM')
-        || err.message?.includes('network-error')
-        || err.message?.includes('session_timed_out')
-        || err.message?.includes('ECONNRESET')
-        || err.message?.includes('ETIMEDOUT');
-
-      if (isRetryable && attempt < maxRetries) {
-        const delay = RETRY_DELAYS[attempt] || 2000;
-        console.warn(`[Notifications] Error de red (intento ${attempt + 1}/${maxRetries + 1}): ${err.message}. Reintentando en ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      throw err;
-    }
-  }
-  throw lastError;
-}
-
-// Procesar respuesta FCM: log de errores, limpieza de tokens invalidos
-async function processFcmResponse(response, tokenList, targetLabel) {
-  const successCount = response.successCount;
-  const failureCount = response.failureCount;
-
-  const INVALID_TOKEN_CODES = [
-    'messaging/registration-token-not-registered',
-    'messaging/invalid-registration-token',
-  ];
-  const tokensToDelete = [];
-
-  if (failureCount > 0) {
-    response.responses.forEach((resp, idx) => {
-      if (!resp.success && resp.error) {
-        console.error(`[Notifications] ${targetLabel} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
-        if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
-          tokensToDelete.push(tokenList[idx]);
-        }
-      }
-    });
-  }
-
-  if (tokensToDelete.length > 0) {
-    try {
-      await prisma.pushToken.deleteMany({
-        where: { token: { in: tokensToDelete } },
-      });
-      console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos de ${targetLabel}`);
-    } catch (delErr) {
-      console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
-    }
-  }
-
-  return { successCount, failureCount };
+  return users.map(u => String(u.id));
 }
 
 // ─── Enviar notificacion push a un usuario especifico ────────────────────────
-// Usa DATA-ONLY messages. La app (via notifee) se encarga de mostrar la notificacion.
-// title y body se incluyen en data para que el background handler los use.
+
+/**
+ * Enviar notificacion a un usuario por su ID en la base de datos.
+ * OneSignal usa include_external_user_ids para targeting directo.
+ *
+ * @param {number} userId - ID del usuario en la DB
+ * @param {Object} options
+ * @param {string} options.title - Titulo de la notificacion
+ * @param {string} options.body  - Cuerpo de la notificacion
+ * @param {Object} [options.data] - Datos adicionales para la app
+ * @param {string} [options.tag]  - Tag para agrupar (reemplaza duplicados)
+ */
 export async function sendToUser(userId, { title, body, data = {}, tag = null }) {
-  if (!isFcmAvailable()) {
-    console.log(`[Notifications] FCM no disponible. Notificacion simulada para user ${userId}: "${title}"`);
-    return { success: false, reason: 'fcm_not_configured' };
-  }
-
   try {
-    const tokens = await getUserTokens(userId);
-    if (tokens.length === 0) {
-      return { success: false, reason: 'no_tokens' };
-    }
-
-    const tokenList = tokens.map(t => t.token);
-
-    // DATA-ONLY message: la app usa notifee para mostrar la notificacion.
-    // No usamos notification:{} porque eso causaria que Firebase muestre una
-    // notificacion automatica Y notifee muestre otra (duplicado).
-    const message = {
+    const result = await oneSignal.sendNotification({
+      title,
+      body,
       data: {
-        title,
-        body,
         ...data,
-        type: data.type || 'general',
-        click_action: data.type || 'general',
         notifTag: tag || `notif_${Date.now()}`,
       },
-      android: {
-        priority: 'high',
-      },
-      tokens: tokenList,
-    };
+      includeExternalUserIds: [String(userId)],
+      tag,
+    });
 
-    const response = await sendMulticastWithRetry(message);
-    const { successCount, failureCount } = await processFcmResponse(response, tokenList, `User ${userId}`);
+    if (!result.success && result.reason !== 'not_configured') {
+      console.warn(`[Notifications] Fallo al enviar a user ${userId}: ${JSON.stringify(result)}`);
+    } else {
+      console.log(`[Notifications] Enviada a user ${userId}: ${result.success ? 'ok' : 'simulada (no configurada)'}`);
+    }
 
-    console.log(`[Notifications] Enviada a user ${userId}: ${successCount} exito, ${failureCount} fallo`);
-    return { success: successCount > 0, successCount, failureCount };
+    return result;
   } catch (err) {
     console.error('[Notifications] Error enviando a usuario:', err.message);
     return { success: false, error: err.message };
   }
 }
 
-// Enviar notificacion a todos los usuarios con un rol
-export async function sendToRole(roleName, { title, body, data = {}, tag = null }) {
-  if (!isFcmAvailable()) {
-    console.log(`[Notifications] FCM no disponible. Notificacion simulada para rol ${roleName}: "${title}"`);
-    return { success: false, reason: 'fcm_not_configured' };
-  }
+// ─── Enviar notificacion a todos los usuarios con un rol ─────────────────────
 
+/**
+ * Enviar notificacion a todos los usuarios activos que tienen un rol especifico.
+ *
+ * @param {string} roleName - Nombre del rol (admin, editor, delivery)
+ * @param {Object} options - Mismas opciones que sendToUser
+ */
+export async function sendToRole(roleName, { title, body, data = {}, tag = null }) {
   try {
-    const tokens = await getTokensByRole(roleName);
-    if (tokens.length === 0) {
-      return { success: false, reason: 'no_tokens' };
+    const userIds = await getUserIdsByRole(roleName);
+    if (userIds.length === 0) {
+      console.log(`[Notifications] No se encontraron usuarios activos con rol "${roleName}"`);
+      return { success: false, reason: 'no_users' };
     }
 
-    const tokenList = tokens.map(t => t.token);
-
-    const message = {
+    const result = await oneSignal.sendNotification({
+      title,
+      body,
       data: {
-        title,
-        body,
         ...data,
-        type: data.type || 'general',
-        click_action: data.type || 'general',
         notifTag: tag || `notif_${Date.now()}`,
       },
-      android: {
-        priority: 'high',
-      },
-      tokens: tokenList,
-    };
+      includeExternalUserIds: userIds,
+      tag,
+    });
 
-    const response = await sendMulticastWithRetry(message);
-    const { successCount, failureCount } = await processFcmResponse(response, tokenList, `Rol ${roleName}`);
-
-    console.log(`[Notifications] Enviada a rol ${roleName} (${tokenList.length} tokens): ${successCount} exito, ${failureCount} fallo`);
-    return { success: successCount > 0, successCount, failureCount };
+    console.log(`[Notifications] Enviada a rol ${roleName} (${userIds.length} usuarios): ${result.recipients ?? 0} entregados`);
+    return result;
   } catch (err) {
     console.error('[Notifications] Error enviando a rol:', err.message);
     return { success: false, error: err.message };
   }
 }
 
-// ─── HELPERS ESPECIFICOS PARA EVENTOS DE ORDENES ────────────────────────
+// ─── HELPERS ESPECIFICOS PARA EVENTOS DE ORDENES ────────────────────────────
 
-// Nuevo pedido creado → notificar a admins, editors y deliverys
+/**
+ * Nuevo pedido creado -> notificar a admins, editors y deliverys.
+ * Cada rol recibe informacion diferente (los deliverys ven mas detalle).
+ */
 export async function notifyNewOrder(order) {
   const promises = [];
   const orderId = String(order.id);
@@ -241,7 +146,6 @@ export async function notifyNewOrder(order) {
   );
 
   // Notificar a todos los deliverys con detalle completo de la orden
-  // Incluye: productos, total, direccion, cliente
   promises.push(
     sendToRole('delivery', {
       title: `Nuevo pedido #${orderId} disponible`,
@@ -259,7 +163,7 @@ export async function notifyNewOrder(order) {
   await Promise.allSettled(promises);
 }
 
-// Delivery asignado → notificar al delivery
+// Delivery asignado -> notificar al delivery
 export async function notifyDeliveryAssigned(order, deliveryName) {
   await sendToUser(order.deliveryId, {
     title: 'Nuevo pedido asignado',
@@ -274,7 +178,7 @@ export async function notifyDeliveryAssigned(order, deliveryName) {
   });
 }
 
-// Pedido aceptado por delivery → notificar al cliente
+// Pedido aceptado por delivery -> notificar al cliente
 export async function notifyOrderAccepted(order, deliveryName) {
   if (!order.userId) return;
   await sendToUser(order.userId, {
@@ -290,7 +194,7 @@ export async function notifyOrderAccepted(order, deliveryName) {
   });
 }
 
-// Estado del pedido cambiado → notificar al cliente
+// Estado del pedido cambiado -> notificar al cliente
 export async function notifyOrderStatusChange(order, newStatus) {
   if (!order.userId) return;
 

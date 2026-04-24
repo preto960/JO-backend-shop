@@ -1,10 +1,23 @@
+// ─── Rutas de Notificaciones (OneSignal) ─────────────────────────────────────
+// Migrado desde FCM a OneSignal.
+//
+// Con OneSignal, el flujo es:
+//   1. La app llama OneSignal.login(userId) al iniciar sesion
+//   2. OneSignal asocia el dispositivo con el external_id automaticamente
+//   3. El backend envia notificaciones usando include_external_user_ids
+//
+// Estas rutas se mantienen por compatibilidad (guardar/eliminar tokens en la DB
+// como referencia) pero el envio real usa OneSignal con external_user_ids.
+
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import { authenticate } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// POST /notifications/token - Registrar token FCM del dispositivo
+// POST /notifications/token - Registrar token/push ID del dispositivo
+// Con OneSignal, el token puede ser el player_id o subscription_id del dispositivo.
+// Se guarda en la DB para referencia y debugging, pero el envio se hace via external_id.
 router.post('/token', authenticate, async (req, res, next) => {
   try {
     const { token, platform } = req.body;
@@ -40,7 +53,7 @@ router.post('/token', authenticate, async (req, res, next) => {
   }
 });
 
-// DELETE /notifications/token - Eliminar token FCM (logout)
+// DELETE /notifications/token - Eliminar token (logout del dispositivo)
 router.delete('/token', authenticate, async (req, res, next) => {
   try {
     const { token } = req.body;
