@@ -34,7 +34,80 @@ async function getTokensByRole(roleName) {
   return tokens;
 }
 
-// Enviar notificacion push a un usuario especifico
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+// Retraso entre reintentos (ms)
+const RETRY_DELAYS = [1000, 2000];
+
+/**
+ * Enviar multicast con reintentos automaticos para errores de red (GOAWAY, REFUSED_STREAM, etc.)
+ * Estos errores son comunes en Vercel serverless por el manejo de HTTP/2.
+ */
+async function sendMulticastWithRetry(message, maxRetries = 2) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await admin.messaging().sendEachForMulticast(message);
+      return response;
+    } catch (err) {
+      lastError = err;
+      const isRetryable = err.message?.includes('GOAWAY')
+        || err.message?.includes('REFUSED_STREAM')
+        || err.message?.includes('network-error')
+        || err.message?.includes('session_timed_out')
+        || err.message?.includes('ECONNRESET')
+        || err.message?.includes('ETIMEDOUT');
+
+      if (isRetryable && attempt < maxRetries) {
+        const delay = RETRY_DELAYS[attempt] || 2000;
+        console.warn(`[Notifications] Error de red (intento ${attempt + 1}/${maxRetries + 1}): ${err.message}. Reintentando en ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
+}
+
+// Procesar respuesta FCM: log de errores, limpieza de tokens invalidos
+async function processFcmResponse(response, tokenList, targetLabel) {
+  const successCount = response.successCount;
+  const failureCount = response.failureCount;
+
+  const INVALID_TOKEN_CODES = [
+    'messaging/registration-token-not-registered',
+    'messaging/invalid-registration-token',
+  ];
+  const tokensToDelete = [];
+
+  if (failureCount > 0) {
+    response.responses.forEach((resp, idx) => {
+      if (!resp.success && resp.error) {
+        console.error(`[Notifications] ${targetLabel} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
+        if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
+          tokensToDelete.push(tokenList[idx]);
+        }
+      }
+    });
+  }
+
+  if (tokensToDelete.length > 0) {
+    try {
+      await prisma.pushToken.deleteMany({
+        where: { token: { in: tokensToDelete } },
+      });
+      console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos de ${targetLabel}`);
+    } catch (delErr) {
+      console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
+    }
+  }
+
+  return { successCount, failureCount };
+}
+
+// ─── Enviar notificacion push a un usuario especifico ────────────────────────
 // Soporta: title, body, data, tag (para notificaciones separadas), sound
 export async function sendToUser(userId, { title, body, data = {}, tag = null, sound = 'default' }) {
   if (!isFcmAvailable()) {
@@ -74,38 +147,8 @@ export async function sendToUser(userId, { title, body, data = {}, tag = null, s
       tokens: tokenList,
     };
 
-    const response = await admin.messaging().sendEachForMulticast(message);
-    const successCount = response.successCount;
-    const failureCount = response.failureCount;
-
-    // Log detallado de errores y limpiar tokens invalidos
-    const INVALID_TOKEN_CODES = [
-      'messaging/registration-token-not-registered',
-      'messaging/invalid-registration-token',
-    ];
-    const tokensToDelete = [];
-
-    if (failureCount > 0) {
-      response.responses.forEach((resp, idx) => {
-        if (!resp.success && resp.error) {
-          console.error(`[Notifications] User ${userId} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
-          if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
-            tokensToDelete.push(tokenList[idx]);
-          }
-        }
-      });
-    }
-
-    if (tokensToDelete.length > 0) {
-      try {
-        await prisma.pushToken.deleteMany({
-          where: { token: { in: tokensToDelete } },
-        });
-        console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos del user ${userId}`);
-      } catch (delErr) {
-        console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
-      }
-    }
+    const response = await sendMulticastWithRetry(message);
+    const { successCount, failureCount } = await processFcmResponse(response, tokenList, `User ${userId}`);
 
     console.log(`[Notifications] Enviada a user ${userId}: ${successCount} exito, ${failureCount} fallo`);
     return { success: successCount > 0, successCount, failureCount };
@@ -154,38 +197,8 @@ export async function sendToRole(roleName, { title, body, data = {}, tag = null,
       tokens: tokenList,
     };
 
-    const response = await admin.messaging().sendEachForMulticast(message);
-    const successCount = response.successCount;
-    const failureCount = response.failureCount;
-
-    // Log detallado de errores y limpiar tokens invalidos
-    const INVALID_TOKEN_CODES = [
-      'messaging/registration-token-not-registered',
-      'messaging/invalid-registration-token',
-    ];
-    const tokensToDelete = [];
-
-    if (failureCount > 0) {
-      response.responses.forEach((resp, idx) => {
-        if (!resp.success && resp.error) {
-          console.error(`[Notifications] Rol ${roleName} token #${idx} fallo: ${resp.error.code} - ${resp.error.message}`);
-          if (INVALID_TOKEN_CODES.includes(resp.error.code)) {
-            tokensToDelete.push(tokenList[idx]);
-          }
-        }
-      });
-    }
-
-    if (tokensToDelete.length > 0) {
-      try {
-        await prisma.pushToken.deleteMany({
-          where: { token: { in: tokensToDelete } },
-        });
-        console.log(`[Notifications] Eliminados ${tokensToDelete.length} tokens invalidos del rol ${roleName}`);
-      } catch (delErr) {
-        console.error('[Notifications] Error eliminando tokens invalidos:', delErr.message);
-      }
-    }
+    const response = await sendMulticastWithRetry(message);
+    const { successCount, failureCount } = await processFcmResponse(response, tokenList, `Rol ${roleName}`);
 
     console.log(`[Notifications] Enviada a rol ${roleName} (${tokenList.length} tokens): ${successCount} exito, ${failureCount} fallo`);
     return { success: successCount > 0, successCount, failureCount };

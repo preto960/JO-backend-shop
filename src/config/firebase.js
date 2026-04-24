@@ -1,4 +1,5 @@
 import admin from 'firebase-admin';
+import http from 'http';
 
 // ─── Inicializacion unica de Firebase Admin ─────────────────────────────────
 // Soporta 2 formatos de variables de entorno:
@@ -13,6 +14,10 @@ if (!admin.apps.length) {
       const credentials = JSON.parse(serviceAccount);
       admin.initializeApp({
         credential: admin.credential.cert(credentials),
+        // IMPORTANTE para Vercel: Usar HTTP/1.1 en vez de HTTP/2.
+        // Las funciones serverless tienen problemas con conexiones HTTP/2
+        // persistentes (GOAWAY, session_timed_out, NGHTTP2_REFUSED_STREAM)
+        httpAgent: new http.Agent({ keepAlive: false }),
       });
     } else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_PRIVATE_KEY) {
       // Formato 2: Variables individuales
@@ -23,6 +28,7 @@ if (!admin.apps.length) {
           private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
           client_email: process.env.FIREBASE_CLIENT_EMAIL,
         }),
+        httpAgent: new http.Agent({ keepAlive: false }),
       });
     } else {
       console.warn('[Firebase] No configurado. Notificaciones push deshabilitadas.');

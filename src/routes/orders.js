@@ -242,13 +242,20 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
       return newOrder;
     });
 
+    // CRITICO: Enviar notificaciones ANTES de responder al cliente.
+    // En Vercel serverless (Hobby plan), la funcion se congela inmediatamente
+    // despues de res.json(), por lo que cualquier proceso async pendiente se pierde.
+    // El await asegura que la notificacion se envia antes de que Vercel congele la funcion.
+    try {
+      await notifyNewOrder(order);
+    } catch (notifErr) {
+      console.error('[Orders] Error enviando notificaciones de nuevo pedido:', notifErr.message);
+    }
+
     res.status(201).json({
       message: 'Pedido creado exitosamente',
       order,
     });
-
-    // Notificar a admins/editores sobre nuevo pedido (fire & forget)
-    notifyNewOrder(order).catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -315,15 +322,20 @@ router.post('/:id/accept', authenticate, requirePermission('delivery.accept'), a
       },
     });
 
+    // CRITICO: Enviar notificaciones ANTES de responder (ver nota en POST /orders)
+    try {
+      await Promise.allSettled([
+        notifyOrderAccepted(updated, updated.delivery?.name),
+        notifyOrderStatusChange(updated, 'shipped'),
+      ]);
+    } catch (notifErr) {
+      console.error('[Orders] Error enviando notificaciones de aceptacion:', notifErr.message);
+    }
+
     res.json({
       message: 'Pedido aceptado correctamente',
       order: updated,
     });
-
-    // Notificar al cliente que su pedido fue aceptado (fire & forget)
-    notifyOrderAccepted(updated, updated.delivery?.name).catch(() => {});
-    // Notificar a admins que el pedido fue tomado (fire & forget)
-    notifyOrderStatusChange(updated, 'shipped').catch(() => {});
   } catch (err) {
     next(err);
   }
@@ -382,15 +394,19 @@ router.put('/:id/status', authenticate, async (req, res, next) => {
       },
     });
 
+    // CRITICO: Notificar ANTES de responder
+    if (updated.userId) {
+      try {
+        await notifyOrderStatusChange(updated, status);
+      } catch (notifErr) {
+        console.error('[Orders] Error notificando cambio de estado:', notifErr.message);
+      }
+    }
+
     res.json({
       message: 'Estado del pedido actualizado',
       order: updated,
     });
-
-    // Notificar al cliente sobre cambio de estado (fire & forget)
-    if (updated.userId) {
-      notifyOrderStatusChange(updated, status).catch(() => {});
-    }
   } catch (err) {
     next(err);
   }
@@ -445,17 +461,24 @@ router.put('/:id/assign', authenticate, async (req, res, next) => {
       },
     });
 
+    // CRITICO: Notificar ANTES de responder
+    try {
+      await notifyDeliveryAssigned(updated);
+    } catch (notifErr) {
+      console.error('[Orders] Error notificando delivery asignado:', notifErr.message);
+    }
+    if (updated.userId) {
+      try {
+        await notifyOrderStatusChange(updated, 'confirmed');
+      } catch (notifErr) {
+        console.error('[Orders] Error notificando confirmacion:', notifErr.message);
+      }
+    }
+
     res.json({
       message: 'Delivery asignado correctamente',
       order: updated,
     });
-
-    // Notificar al delivery asignado (fire & forget)
-    notifyDeliveryAssigned(updated).catch(() => {});
-    // Notificar al cliente que su pedido fue confirmado (fire & forget)
-    if (updated.userId) {
-      notifyOrderStatusChange(updated, 'confirmed').catch(() => {});
-    }
   } catch (err) {
     next(err);
   }
@@ -508,12 +531,16 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       });
     });
 
-    res.json({ message: 'Pedido cancelado y stock restaurado' });
-
-    // Notificar al cliente sobre cancelacion (fire & forget)
+    // CRITICO: Notificar ANTES de responder
     if (order.userId) {
-      notifyOrderStatusChange(order, 'cancelled').catch(() => {});
+      try {
+        await notifyOrderStatusChange(order, 'cancelled');
+      } catch (notifErr) {
+        console.error('[Orders] Error notificando cancelacion:', notifErr.message);
+      }
     }
+
+    res.json({ message: 'Pedido cancelado y stock restaurado' });
   } catch (err) {
     next(err);
   }
