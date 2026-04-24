@@ -108,8 +108,9 @@ async function processFcmResponse(response, tokenList, targetLabel) {
 }
 
 // ─── Enviar notificacion push a un usuario especifico ────────────────────────
-// Soporta: title, body, data, tag (para notificaciones separadas), sound
-export async function sendToUser(userId, { title, body, data = {}, tag = null, sound = 'default' }) {
+// Usa DATA-ONLY messages. La app (via notifee) se encarga de mostrar la notificacion.
+// title y body se incluyen en data para que el background handler los use.
+export async function sendToUser(userId, { title, body, data = {}, tag = null }) {
   if (!isFcmAvailable()) {
     console.log(`[Notifications] FCM no disponible. Notificacion simulada para user ${userId}: "${title}"`);
     return { success: false, reason: 'fcm_not_configured' };
@@ -123,26 +124,20 @@ export async function sendToUser(userId, { title, body, data = {}, tag = null, s
 
     const tokenList = tokens.map(t => t.token);
 
-    const androidNotif = {
-      sound,
-      channelId: 'joshop_orders',
-      priority: 'high',
-    };
-    // tag permite que cada notificacion sea independiente (no se sobreescriben)
-    if (tag) {
-      androidNotif.tag = tag;
-    }
-
+    // DATA-ONLY message: la app usa notifee para mostrar la notificacion.
+    // No usamos notification:{} porque eso causaria que Firebase muestre una
+    // notificacion automatica Y notifee muestre otra (duplicado).
     const message = {
-      notification: { title, body },
       data: {
+        title,
+        body,
         ...data,
         type: data.type || 'general',
         click_action: data.type || 'general',
+        notifTag: tag || `notif_${Date.now()}`,
       },
       android: {
         priority: 'high',
-        notification: androidNotif,
       },
       tokens: tokenList,
     };
@@ -159,8 +154,7 @@ export async function sendToUser(userId, { title, body, data = {}, tag = null, s
 }
 
 // Enviar notificacion a todos los usuarios con un rol
-// Soporta: title, body, data, tag, sound
-export async function sendToRole(roleName, { title, body, data = {}, tag = null, sound = 'default' }) {
+export async function sendToRole(roleName, { title, body, data = {}, tag = null }) {
   if (!isFcmAvailable()) {
     console.log(`[Notifications] FCM no disponible. Notificacion simulada para rol ${roleName}: "${title}"`);
     return { success: false, reason: 'fcm_not_configured' };
@@ -174,25 +168,17 @@ export async function sendToRole(roleName, { title, body, data = {}, tag = null,
 
     const tokenList = tokens.map(t => t.token);
 
-    const androidNotif = {
-      sound,
-      channelId: 'joshop_orders',
-      priority: 'high',
-    };
-    if (tag) {
-      androidNotif.tag = tag;
-    }
-
     const message = {
-      notification: { title, body },
       data: {
+        title,
+        body,
         ...data,
         type: data.type || 'general',
         click_action: data.type || 'general',
+        notifTag: tag || `notif_${Date.now()}`,
       },
       android: {
         priority: 'high',
-        notification: androidNotif,
       },
       tokens: tokenList,
     };
