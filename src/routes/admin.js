@@ -1,7 +1,7 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission, hasPermission } from '../middleware/auth.js';
-import { sanitize } from '../services/auth.js';
+import { sanitize, hashPassword, isValidEmail } from '../services/auth.js';
 
 const router = express.Router();
 
@@ -210,6 +210,9 @@ router.get('/users', authenticate, requirePermission('users.read'), async (req, 
           active: true,
           emailVerified: true,
           createdAt: true,
+          store: {
+            select: { id: true, name: true },
+          },
           roles: {
             include: {
               role: { select: { id: true, name: true, description: true } },
@@ -391,6 +394,102 @@ router.delete('/users/:id/permissions/:permissionId', authenticate, requirePermi
     });
 
     res.json({ message: 'Permiso revocado del usuario' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CREAR USUARIO (ADMIN)
+// ═══════════════════════════════════════════════════════════════════════════
+
+// POST /auth/users - Crear usuario desde admin
+router.post('/users', authenticate, requirePermission('users.create'), async (req, res, next) => {
+  try {
+    const { name, email, password, phone, birthdate, roleIds, storeId } = req.body;
+
+    if (!name || name.trim().length < 2) {
+      return res.status(400).json({ error: 'Nombre requerido (mínimo 2 caracteres)', field: 'name' });
+    }
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Email válido requerido', field: 'email' });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Contraseña requerida (mínimo 6 caracteres)', field: 'password' });
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email: email.toLowerCase().trim() } });
+    if (existingUser) {
+      return res.status(409).json({ error: 'Ya existe un usuario con ese email', field: 'email' });
+    }
+
+    const hashedPassword = await hashPassword(password);
+
+    // Validar roles si se proporcionan
+    let rolesData = [];
+    if (roleIds && Array.isArray(roleIds) && roleIds.length > 0) {
+      const roles = await prisma.role.findMany({
+        where: { id: { in: roleIds.map(id => parseInt(id)) } },
+      });
+      if (roles.length !== roleIds.length) {
+        return res.status(400).json({ error: 'Uno o más roles no encontrados' });
+      }
+      rolesData = roles;
+    } else {
+      // Si no se especifican roles, asignar customer por defecto
+      const customerRole = await prisma.role.findUnique({ where: { name: 'customer' } });
+      if (customerRole) rolesData = [customerRole];
+    }
+
+    // Validar storeId si se proporciona
+    if (storeId) {
+      const store = await prisma.store.findUnique({ where: { id: parseInt(storeId) } });
+      if (!store) {
+        return res.status(400).json({ error: 'Tienda no encontrada', field: 'storeId' });
+      }
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        name: sanitize(name),
+        email: email.toLowerCase().trim(),
+        password: hashedPassword,
+        phone: phone ? sanitize(phone) : null,
+        birthdate: birthdate ? sanitize(birthdate) : null,
+        active: true,
+        emailVerified: new Date(),
+        storeId: storeId ? parseInt(storeId) : null,
+        roles: {
+          create: rolesData.map(role => ({
+            roleId: role.id,
+          })),
+        },
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        active: true,
+        createdAt: true,
+        roles: {
+          include: {
+            role: { select: { id: true, name: true, description: true } },
+          },
+        },
+        store: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+
+    res.status(201).json({
+      message: 'Usuario creado exitosamente',
+      user: {
+        ...user,
+        roles: user.roles.map(ur => ur.role),
+      },
+    });
   } catch (err) {
     next(err);
   }

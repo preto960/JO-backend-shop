@@ -95,10 +95,13 @@ model User {
   roles       UserRole[]
   permissions UserPermission[]
   ownedStore  Store?     @relation("StoreOwner")
+  storeId     Int?       @map("store_id")
+  store       Store?     @relation("StoreAssignment", fields: [storeId], references: [id])
   pushTokens  PushToken[]
 
   @@index([email])
   @@index([active])
+  @@index([storeId])
   @@map("users")
 }
 
@@ -140,6 +143,7 @@ model Store {
   ownerId     Int       @unique @map("owner_id")
   owner       User      @relation("StoreOwner", fields: [ownerId], references: [id])
 
+  assignedUsers User[]  @relation("StoreAssignment")
   products    Product[]
 
   @@index([ownerId])
@@ -232,6 +236,17 @@ model OrderItem {
 
   @@index([orderId])
   @@map("order_items")
+}
+
+// ─── CONFIGURACIÓN DEL SISTEMA ─────────────────────────────────────────────
+
+model SystemConfig {
+  id        Int       @id @default(1)
+  key       String    @unique @db.VarChar(100)
+  value     String    @db.Text
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@map("system_config")
 }
 
 // ─── PUSH NOTIFICATION TOKENS ────────────────────────────────────────────

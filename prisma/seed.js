@@ -86,6 +86,7 @@ async function main() {
   await prisma.product.deleteMany();
   await prisma.store.deleteMany();
   await prisma.category.deleteMany();
+  await prisma.systemConfig.deleteMany();
   await prisma.user.deleteMany();
   await prisma.permission.deleteMany();
   await prisma.role.deleteMany();
@@ -141,6 +142,14 @@ async function main() {
   });
 
   console.log(`✅ 4 roles creados: admin, customer, editor, delivery`);
+
+  // ─── Configuración del sistema ────────────────────────────────────────────
+  await prisma.systemConfig.createMany({
+    data: [
+      { key: 'multi_store_mode', value: 'false' },
+    ],
+  });
+  console.log('✅ Configuración del sistema creada (multi_store_mode = false)');
 
   // ─── Asignar permisos a roles ─────────────────────────────────────────────
 

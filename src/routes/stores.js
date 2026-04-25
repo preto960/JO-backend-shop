@@ -50,6 +50,27 @@ router.get('/', optionalAuth, async (req, res, next) => {
   }
 });
 
+// GET /stores/my-store - Obtener la tienda del editor autenticado
+// IMPORTANTE: Esta ruta debe ir ANTES de /:id para no ser capturada como parámetro
+router.get('/my-store', authenticate, async (req, res, next) => {
+  try {
+    const store = await prisma.store.findUnique({
+      where: { ownerId: req.user.id },
+      include: {
+        _count: { select: { products: true, assignedUsers: true } },
+      },
+    });
+
+    if (!store) {
+      return res.status(404).json({ error: 'No tienes una tienda asociada' });
+    }
+
+    res.json(store);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /stores/:id - Detalle de tienda
 router.get('/:id', async (req, res, next) => {
   try {
@@ -69,26 +90,6 @@ router.get('/:id', async (req, res, next) => {
 
     if (!store) {
       return res.status(404).json({ error: 'Tienda no encontrada' });
-    }
-
-    res.json(store);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// GET /stores/my-store - Obtener la tienda del editor autenticado
-router.get('/my-store', authenticate, async (req, res, next) => {
-  try {
-    const store = await prisma.store.findUnique({
-      where: { ownerId: req.user.id },
-      include: {
-        _count: { select: { products: true } },
-      },
-    });
-
-    if (!store) {
-      return res.status(404).json({ error: 'No tienes una tienda asociada' });
     }
 
     res.json(store);

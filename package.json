@@ -13,7 +13,7 @@
     "db:studio": "npx prisma studio"
   },
   "dependencies": {
-    "@prisma/client": "^5.14.0",
+    "@prisma/client": "^5.22.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.19.2",
@@ -23,7 +23,7 @@
     "nodemailer": "^6.9.13"
   },
   "devDependencies": {
-    "prisma": "^5.14.0"
+    "prisma": "^5.22.0"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
