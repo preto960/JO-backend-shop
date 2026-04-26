@@ -33,12 +33,34 @@ router.put('/', authenticate, async (req, res, next) => {
     const results = {};
     for (const [key, value] of Object.entries(settings)) {
       const strValue = String(value);
-      const upserted = await prisma.systemConfig.upsert({
+
+      const existing = await prisma.systemConfig.findUnique({
         where: { key },
-        update: { value: strValue },
-        create: { key, value: strValue },
       });
-      results[key] = upserted.value;
+
+      let saved;
+      if (existing) {
+        saved = await prisma.systemConfig.update({
+          where: { key },
+          data: { value: strValue },
+        });
+      } else {
+        // Si la DB tiene id fijo en 1 y ya existe una fila, usar el máximo + 1
+        const maxId = await prisma.systemConfig.aggregate({
+          _max: { id: true },
+        });
+        const nextId = (maxId._max.id || 0) + 1;
+
+        saved = await prisma.systemConfig.create({
+          data: {
+            id: nextId,
+            key,
+            value: strValue,
+          },
+        });
+      }
+
+      results[key] = saved.value;
     }
 
     res.json({
