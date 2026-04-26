@@ -24,16 +24,24 @@ router.get('/', optionalAuth, async (req, res, next) => {
       where.categoryId = parseInt(category);
     }
 
-    // Editor solo ve productos de su tienda
-    if (req.user && req.user.roles.includes('editor') && !req.user.roles.includes('admin')) {
-      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
-      if (editorStore) {
-        where.storeId = editorStore.id;
-      }
+    // Filtro por tienda (vía ProductStore)
+    if (store) {
+      where.stores = {
+        some: { storeId: parseInt(store) },
+      };
     }
 
-    if (store) {
-      where.storeId = parseInt(store);
+    // Editor solo ve productos de sus tiendas asignadas
+    if (req.user && req.user.roles.includes('editor') && !req.user.roles.includes('admin')) {
+      const userStores = await prisma.userStore.findMany({
+        where: { userId: req.user.id },
+        select: { storeId: true },
+      });
+      if (userStores.length > 0) {
+        where.stores = {
+          some: { storeId: { in: userStores.map(s => s.storeId) } },
+        };
+      }
     }
 
     let orderBy = { createdAt: 'desc' };
@@ -49,14 +57,20 @@ router.get('/', optionalAuth, async (req, res, next) => {
         take: parseInt(limit),
         include: {
           category: { select: { id: true, name: true } },
-          store: { select: { id: true, name: true, slug: true } },
+          stores: { include: { store: { select: { id: true, name: true, slug: true } } } },
         },
       }),
       prisma.product.count({ where }),
     ]);
 
+    const formatted = products.map(p => ({
+      ...p,
+      store: p.stores.length > 0 ? p.stores[0].store : null,
+      storeIds: p.stores.map(ps => ps.storeId),
+    }));
+
     res.json({
-      data: products,
+      data: formatted,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -91,7 +105,9 @@ router.get('/search', optionalAuth, async (req, res, next) => {
     }
 
     if (store) {
-      where.storeId = parseInt(store);
+      where.stores = {
+        some: { storeId: parseInt(store) },
+      };
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -104,14 +120,20 @@ router.get('/search', optionalAuth, async (req, res, next) => {
         take: parseInt(limit),
         include: {
           category: { select: { id: true, name: true } },
-          store: { select: { id: true, name: true, slug: true } },
+          stores: { include: { store: { select: { id: true, name: true, slug: true } } } },
         },
       }),
       prisma.product.count({ where }),
     ]);
 
+    const formatted = products.map(p => ({
+      ...p,
+      store: p.stores.length > 0 ? p.stores[0].store : null,
+      storeIds: p.stores.map(ps => ps.storeId),
+    }));
+
     res.json({
-      data: products,
+      data: formatted,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -131,7 +153,7 @@ router.get('/:id', async (req, res, next) => {
       where: { id: parseInt(req.params.id) },
       include: {
         category: { select: { id: true, name: true, slug: true } },
-        store: { select: { id: true, name: true, slug: true } },
+        stores: { include: { store: { select: { id: true, name: true, slug: true } } } },
       },
     });
 
@@ -139,7 +161,11 @@ router.get('/:id', async (req, res, next) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    res.json(product);
+    res.json({
+      ...product,
+      store: product.stores.length > 0 ? product.stores[0].store : null,
+      storeIds: product.stores.map(ps => ps.storeId),
+    });
   } catch (err) {
     next(err);
   }
@@ -148,7 +174,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /products - Crear producto (requiere permiso products.create)
 router.post('/', authenticate, requirePermission('products.create'), async (req, res, next) => {
   try {
-    const { name, description, price, image, thumbnail, stock, categoryId, storeId, active } = req.body;
+    const { name, description, price, image, thumbnail, stock, categoryId, storeIds, active } = req.body;
 
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
@@ -165,13 +191,26 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
       return res.status(404).json({ error: 'Categoría no encontrada', field: 'categoryId' });
     }
 
-    // Auto-asignar tienda del editor
-    let targetStoreId = storeId ? parseInt(storeId) : null;
-    const isAdmin = req.user.roles.includes('admin');
-    const isEditor = req.user.roles.includes('editor');
-    if (!targetStoreId && isEditor) {
-      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
-      if (editorStore) targetStoreId = editorStore.id;
+    // Validar storeIds si se proporcionan
+    let targetStoreIds = [];
+    if (storeIds && Array.isArray(storeIds) && storeIds.length > 0) {
+      const stores = await prisma.store.findMany({
+        where: { id: { in: storeIds.map(id => parseInt(id)) } },
+      });
+      if (stores.length !== storeIds.length) {
+        return res.status(400).json({ error: 'Una o más tiendas no encontradas', field: 'storeIds' });
+      }
+      targetStoreIds = storeIds.map(id => parseInt(id));
+    } else {
+      // Si es editor y no se especifican tiendas, auto-asignar a sus tiendas
+      const isEditor = req.user.roles.includes('editor') && !req.user.roles.includes('admin');
+      if (isEditor) {
+        const userStores = await prisma.userStore.findMany({
+          where: { userId: req.user.id },
+          select: { storeId: true },
+        });
+        targetStoreIds = userStores.map(s => s.storeId);
+      }
     }
 
     const slug = sanitize(name)
@@ -193,17 +232,23 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
         stock: parseInt(stock) || 0,
         active: active !== undefined ? Boolean(active) : true,
         categoryId: parseInt(categoryId),
-        ...(targetStoreId ? { storeId: targetStoreId } : {}),
+        stores: {
+          create: targetStoreIds.map(storeId => ({ storeId })),
+        },
       },
       include: {
         category: true,
-        store: { select: { id: true, name: true } },
+        stores: { include: { store: { select: { id: true, name: true } } } },
       },
     });
 
     res.status(201).json({
       message: 'Producto creado exitosamente',
-      product,
+      product: {
+        ...product,
+        store: product.stores.length > 0 ? product.stores[0].store : null,
+        storeIds: product.stores.map(ps => ps.storeId),
+      },
     });
   } catch (err) {
     next(err);
@@ -217,22 +262,28 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      include: { store: { select: { id: true } } },
+      include: { stores: { include: { store: { select: { id: true } } } } },
     });
     if (!product) {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    // Editor solo puede editar productos de su tienda
+    // Editor solo puede editar productos de sus tiendas
     const isEditor = req.user.roles.includes('editor') && !req.user.roles.includes('admin');
-    if (isEditor && product.storeId) {
-      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
-      if (editorStore && product.storeId !== editorStore.id) {
-        return res.status(403).json({ error: 'Solo puedes editar productos de tu tienda' });
+    if (isEditor) {
+      const userStores = await prisma.userStore.findMany({
+        where: { userId: req.user.id },
+        select: { storeId: true },
+      });
+      const userStoreIds = userStores.map(s => s.storeId);
+      const productStoreIds = product.stores.map(ps => ps.storeId);
+      const hasAccess = productStoreIds.some(id => userStoreIds.includes(id));
+      if (!hasAccess && productStoreIds.length > 0) {
+        return res.status(403).json({ error: 'Solo puedes editar productos de tus tiendas' });
       }
     }
 
-    const { name, description, price, image, thumbnail, stock, categoryId, active } = req.body;
+    const { name, description, price, image, thumbnail, stock, categoryId, active, storeIds } = req.body;
     const updateData = {};
 
     if (name !== undefined) {
@@ -268,18 +319,43 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
       updateData.categoryId = parseInt(categoryId);
     }
 
+    // Actualizar tiendas asignadas (muchos a muchos)
+    if (storeIds !== undefined) {
+      if (Array.isArray(storeIds) && storeIds.length > 0) {
+        const stores = await prisma.store.findMany({
+          where: { id: { in: storeIds.map(id => parseInt(id)) } },
+        });
+        if (stores.length !== storeIds.length) {
+          return res.status(400).json({ error: 'Una o más tiendas no encontradas', field: 'storeIds' });
+        }
+      }
+      await prisma.productStore.deleteMany({ where: { productId } });
+      if (Array.isArray(storeIds) && storeIds.length > 0) {
+        await prisma.productStore.createMany({
+          data: storeIds.map(id => ({
+            productId,
+            storeId: parseInt(id),
+          })),
+        });
+      }
+    }
+
     const updated = await prisma.product.update({
       where: { id: productId },
       data: updateData,
       include: {
         category: true,
-        store: { select: { id: true, name: true } },
+        stores: { include: { store: { select: { id: true, name: true } } } },
       },
     });
 
     res.json({
       message: 'Producto actualizado',
-      product: updated,
+      product: {
+        ...updated,
+        store: updated.stores.length > 0 ? updated.stores[0].store : null,
+        storeIds: updated.stores.map(ps => ps.storeId),
+      },
     });
   } catch (err) {
     next(err);
@@ -293,18 +369,24 @@ router.delete('/:id', authenticate, requirePermission('products.delete'), async 
 
     const product = await prisma.product.findUnique({
       where: { id: productId },
-      include: { store: { select: { id: true } } },
+      include: { stores: { include: { store: { select: { id: true } } } } },
     });
     if (!product) {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    // Editor solo puede eliminar productos de su tienda
+    // Editor solo puede eliminar productos de sus tiendas
     const isEditor = req.user.roles.includes('editor') && !req.user.roles.includes('admin');
-    if (isEditor && product.storeId) {
-      const editorStore = await prisma.store.findUnique({ where: { ownerId: req.user.id }, select: { id: true } });
-      if (editorStore && product.storeId !== editorStore.id) {
-        return res.status(403).json({ error: 'Solo puedes eliminar productos de tu tienda' });
+    if (isEditor) {
+      const userStores = await prisma.userStore.findMany({
+        where: { userId: req.user.id },
+        select: { storeId: true },
+      });
+      const userStoreIds = userStores.map(s => s.storeId);
+      const productStoreIds = product.stores.map(ps => ps.storeId);
+      const hasAccess = productStoreIds.some(id => userStoreIds.includes(id));
+      if (!hasAccess && productStoreIds.length > 0) {
+        return res.status(403).json({ error: 'Solo puedes eliminar productos de tus tiendas' });
       }
     }
 

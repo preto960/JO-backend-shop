@@ -93,13 +93,11 @@ model User {
   roles       UserRole[]
   permissions UserPermission[]
   ownedStore  Store?     @relation("StoreOwner")
-  storeId     Int?       @map("store_id")
-  store       Store?     @relation("StoreAssignment", fields: [storeId], references: [id])
+  stores      UserStore[]
   pushTokens  PushToken[]
 
   @@index([email])
   @@index([active])
-  @@index([storeId])
   @@map("users")
 }
 
@@ -141,8 +139,8 @@ model Store {
   ownerId     Int       @unique @map("owner_id")
   owner       User      @relation("StoreOwner", fields: [ownerId], references: [id])
 
-  assignedUsers User[]  @relation("StoreAssignment")
-  products    Product[]
+  users       UserStore[]
+  products    ProductStore[]
 
   @@index([ownerId])
   @@index([active])
@@ -180,9 +178,7 @@ model Product {
   categoryId  Int       @map("category_id")
   category    Category  @relation(fields: [categoryId], references: [id])
 
-  storeId     Int?       @map("store_id")
-  store       Store?     @relation(fields: [storeId], references: [id])
-
+  stores      ProductStore[]
   orderItems  OrderItem[]
 
   @@index([categoryId])
@@ -234,6 +230,37 @@ model OrderItem {
 
   @@index([orderId])
   @@map("order_items")
+}
+
+// ─── USUARIO-TIENDA (MUCHOS A MUCHOS) ─────────────────────────────────────
+
+model UserStore {
+  userId     Int      @map("user_id")
+  storeId    Int      @map("store_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([userId, storeId])
+  @@index([userId])
+  @@index([storeId])
+  @@map("user_stores")
+}
+
+// ─── PRODUCTO-TIENDA (MUCHOS A MUCHOS) ────────────────────────────────────
+
+model ProductStore {
+  productId Int @map("product_id")
+  storeId   Int @map("store_id")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@id([productId, storeId])
+  @@index([productId])
+  @@index([storeId])
+  @@map("product_stores")
 }
 
 // ─── CONFIGURACIÓN DEL SISTEMA ─────────────────────────────────────────────

@@ -210,8 +210,10 @@ router.get('/users', authenticate, requirePermission('users.read'), async (req, 
           active: true,
           emailVerified: true,
           createdAt: true,
-          store: {
-            select: { id: true, name: true },
+          stores: {
+            include: {
+              store: { select: { id: true, name: true } },
+            },
           },
           roles: {
             include: {
@@ -231,6 +233,7 @@ router.get('/users', authenticate, requirePermission('users.read'), async (req, 
 
     const formatted = users.map(u => ({
       ...u,
+      stores: u.stores.map(us => us.store),
       roles: u.roles.map(ur => ur.role),
       permissions: u.permissions.map(up => up.permission),
     }));
@@ -331,7 +334,7 @@ router.post('/users/:id/permissions', authenticate, requirePermission('users.edi
 router.put('/users/:id', authenticate, requirePermission('users.edit'), async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id);
-    const { name, phone, birthdate, active, storeId } = req.body;
+    const { name, phone, birthdate, active, storeIds } = req.body;
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -360,16 +363,25 @@ router.put('/users/:id', authenticate, requirePermission('users.edit'), async (r
       updateData.active = Boolean(active);
     }
 
-    // Asignar/desasignar tienda
-    if (storeId !== undefined) {
-      if (storeId === null || storeId === '') {
-        updateData.storeId = null;
-      } else {
-        const store = await prisma.store.findUnique({ where: { id: parseInt(storeId) } });
-        if (!store) {
-          return res.status(400).json({ error: 'Tienda no encontrada', field: 'storeId' });
+    // Actualizar tiendas asignadas (muchos a muchos)
+    if (storeIds !== undefined) {
+      if (Array.isArray(storeIds) && storeIds.length > 0) {
+        const stores = await prisma.store.findMany({
+          where: { id: { in: storeIds.map(id => parseInt(id)) } },
+        });
+        if (stores.length !== storeIds.length) {
+          return res.status(400).json({ error: 'Una o más tiendas no encontradas', field: 'storeIds' });
         }
-        updateData.storeId = parseInt(storeId);
+      }
+      // Reemplazar todas las asignaciones de tiendas
+      await prisma.userStore.deleteMany({ where: { userId } });
+      if (Array.isArray(storeIds) && storeIds.length > 0) {
+        await prisma.userStore.createMany({
+          data: storeIds.map(id => ({
+            userId,
+            storeId: parseInt(id),
+          })),
+        });
       }
     }
 
@@ -383,15 +395,19 @@ router.put('/users/:id', authenticate, requirePermission('users.edit'), async (r
         phone: true,
         birthdate: true,
         active: true,
-        storeId: true,
-        store: { select: { id: true, name: true } },
         createdAt: true,
+        stores: {
+          include: { store: { select: { id: true, name: true } } },
+        },
       },
     });
 
     res.json({
       message: 'Usuario actualizado correctamente',
-      user: updated,
+      user: {
+        ...updated,
+        stores: updated.stores.map(us => us.store),
+      },
     });
   } catch (err) {
     next(err);
@@ -421,7 +437,7 @@ router.delete('/users/:id/permissions/:permissionId', authenticate, requirePermi
 // POST /auth/users - Crear usuario desde admin
 router.post('/users', authenticate, requirePermission('users.create'), async (req, res, next) => {
   try {
-    const { name, email, password, phone, birthdate, roleIds, storeId } = req.body;
+    const { name, email, password, phone, birthdate, roleIds, storeIds } = req.body;
 
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre requerido (mínimo 2 caracteres)', field: 'name' });
@@ -456,12 +472,16 @@ router.post('/users', authenticate, requirePermission('users.create'), async (re
       if (customerRole) rolesData = [customerRole];
     }
 
-    // Validar storeId si se proporciona
-    if (storeId) {
-      const store = await prisma.store.findUnique({ where: { id: parseInt(storeId) } });
-      if (!store) {
-        return res.status(400).json({ error: 'Tienda no encontrada', field: 'storeId' });
+    // Validar storeIds si se proporcionan
+    let storeData = [];
+    if (storeIds && Array.isArray(storeIds) && storeIds.length > 0) {
+      const stores = await prisma.store.findMany({
+        where: { id: { in: storeIds.map(id => parseInt(id)) } },
+      });
+      if (stores.length !== storeIds.length) {
+        return res.status(400).json({ error: 'Una o más tiendas no encontradas', field: 'storeIds' });
       }
+      storeData = stores;
     }
 
     const user = await prisma.user.create({
@@ -473,10 +493,14 @@ router.post('/users', authenticate, requirePermission('users.create'), async (re
         birthdate: birthdate ? sanitize(birthdate) : null,
         active: true,
         emailVerified: new Date(),
-        storeId: storeId ? parseInt(storeId) : null,
         roles: {
           create: rolesData.map(role => ({
             roleId: role.id,
+          })),
+        },
+        stores: {
+          create: storeData.map(store => ({
+            storeId: store.id,
           })),
         },
       },
@@ -492,8 +516,8 @@ router.post('/users', authenticate, requirePermission('users.create'), async (re
             role: { select: { id: true, name: true, description: true } },
           },
         },
-        store: {
-          select: { id: true, name: true },
+        stores: {
+          include: { store: { select: { id: true, name: true } } },
         },
       },
     });
@@ -503,6 +527,7 @@ router.post('/users', authenticate, requirePermission('users.create'), async (re
       user: {
         ...user,
         roles: user.roles.map(ur => ur.role),
+        stores: user.stores.map(us => us.store),
       },
     });
   } catch (err) {
