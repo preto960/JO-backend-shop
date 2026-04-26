@@ -331,7 +331,7 @@ router.post('/users/:id/permissions', authenticate, requirePermission('users.edi
 router.put('/users/:id', authenticate, requirePermission('users.edit'), async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id);
-    const { name, phone, birthdate, active } = req.body;
+    const { name, phone, birthdate, active, storeId } = req.body;
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -360,6 +360,19 @@ router.put('/users/:id', authenticate, requirePermission('users.edit'), async (r
       updateData.active = Boolean(active);
     }
 
+    // Asignar/desasignar tienda
+    if (storeId !== undefined) {
+      if (storeId === null || storeId === '') {
+        updateData.storeId = null;
+      } else {
+        const store = await prisma.store.findUnique({ where: { id: parseInt(storeId) } });
+        if (!store) {
+          return res.status(400).json({ error: 'Tienda no encontrada', field: 'storeId' });
+        }
+        updateData.storeId = parseInt(storeId);
+      }
+    }
+
     const updated = await prisma.user.update({
       where: { id: userId },
       data: updateData,
@@ -370,6 +383,8 @@ router.put('/users/:id', authenticate, requirePermission('users.edit'), async (r
         phone: true,
         birthdate: true,
         active: true,
+        storeId: true,
+        store: { select: { id: true, name: true } },
         createdAt: true,
       },
     });
