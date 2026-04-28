@@ -297,6 +297,7 @@ router.post('/login-verify', async (req, res, next) => {
         name: user.name,
         email: user.email,
         phone: user.phone,
+        twoFactorEnabled: user.twoFactorEnabled || false,
         roles,
         permissions,
       },
