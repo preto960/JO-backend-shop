@@ -1,5 +1,5 @@
 import express from 'express';
-import prisma from '../lib/prisma.js';
+import prisma, { ensureColumns } from '../lib/prisma.js';
 import {
   hashPassword,
   comparePassword,
@@ -13,6 +13,9 @@ import { getUserPermissions } from '../middleware/auth.js';
 import { sendWelcomeEmail, sendOtpEmail, isEmailConfigured } from '../services/email.js';
 
 const router = express.Router();
+
+// ─── Auto-migration: asegurar columnas 2FA existan en la DB ──────────────
+ensureColumns().catch(() => {});
 
 // Helper: Formatear respuesta del usuario
 const formatUserResponse = async (user) => {
