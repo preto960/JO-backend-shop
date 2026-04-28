@@ -1,6 +1,27 @@
 import express from 'express';
+import multer from 'multer';
 import prisma from '../lib/prisma.js';
 import { authenticate, hasRole } from '../middleware/auth.js';
+
+// Multer config for logo upload (in-memory)
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de archivo no permitido. Solo se aceptan JPG, PNG, WebP y SVG.'));
+    }
+  },
+});
 
 const router = express.Router();
 
@@ -71,5 +92,113 @@ router.put('/', authenticate, async (req, res, next) => {
     next(err);
   }
 });
+
+// POST /config/upload-logo - Subir logo del shop a Vercel Blob (solo admin)
+router.post('/upload-logo', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envió ningún archivo' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN no configurado' });
+    }
+
+    const blobName = `config_shop/${req.file.originalname}`;
+
+    // 1. Request upload URL from Vercel Blob
+    const blobRes = await fetch('https://blob.vercel-storage.com', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${blobToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: blobName,
+        addRandomSuffix: false,
+      }),
+    });
+
+    if (!blobRes.ok) {
+      const errText = await blobRes.text();
+      console.error('Vercel Blob error:', errText);
+      return res.status(500).json({ error: 'Error al obtener URL de subida a Blob' });
+    }
+
+    const blobData = await blobRes.json();
+    const uploadUrl = blobData.url;
+
+    // 2. PUT the file content to the upload URL
+    const putRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': req.file.mimetype,
+      },
+      body: req.file.buffer,
+    });
+
+    if (!putRes.ok) {
+      const errText = await putRes.text();
+      console.error('Blob PUT error:', errText);
+      return res.status(500).json({ error: 'Error al subir archivo a Blob' });
+    }
+
+    // 3. Save the download URL to SystemConfig
+    const downloadUrl = blobData.downloadUrl || uploadUrl;
+    await upsertConfig('shop_logo_url', downloadUrl);
+
+    res.json({
+      success: true,
+      url: downloadUrl,
+      message: 'Logo actualizado',
+    });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el límite de 2MB' });
+      }
+    }
+    next(err);
+  }
+});
+
+// DELETE /config/upload-logo - Eliminar logo del shop (solo admin)
+router.delete('/upload-logo', authenticate, async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    await upsertConfig('shop_logo_url', '');
+
+    res.json({ success: true, message: 'Logo eliminado' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Helper: upsert a SystemConfig entry
+async function upsertConfig(key, value) {
+  const existing = await prisma.systemConfig.findUnique({ where: { key } });
+
+  if (existing) {
+    return prisma.systemConfig.update({
+      where: { key },
+      data: { value },
+    });
+  }
+
+  const maxId = await prisma.systemConfig.aggregate({ _max: { id: true } });
+  const nextId = (maxId._max.id || 0) + 1;
+
+  return prisma.systemConfig.create({
+    data: { id: nextId, key, value },
+  });
+}
 
 export default router;
