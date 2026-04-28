@@ -1,5 +1,6 @@
 import express from 'express';
 import multer from 'multer';
+import { put } from '@vercel/blob';
 import prisma from '../lib/prisma.js';
 import { authenticate, hasRole } from '../middleware/auth.js';
 
@@ -109,52 +110,23 @@ router.post('/upload-logo', authenticate, upload.single('file'), async (req, res
       return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN no configurado' });
     }
 
-    const blobName = `config_shop/${req.file.originalname}`;
+    // Sanitize filename: remove spaces and special chars
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `config_shop/${Date.now()}-${safeName}`;
 
-    // 1. Request upload URL from Vercel Blob
-    const blobRes = await fetch('https://blob.vercel-storage.com', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${blobToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: blobName,
-        addRandomSuffix: false,
-      }),
+    // Upload directly using @vercel/blob SDK (put)
+    const blob = await put(blobName, req.file.buffer, {
+      access: 'public',
+      contentType: req.file.mimetype,
+      addRandomSuffix: false,
     });
 
-    if (!blobRes.ok) {
-      const errText = await blobRes.text();
-      console.error('Vercel Blob error:', errText);
-      return res.status(500).json({ error: 'Error al obtener URL de subida a Blob' });
-    }
-
-    const blobData = await blobRes.json();
-    const uploadUrl = blobData.url;
-
-    // 2. PUT the file content to the upload URL
-    const putRes = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': req.file.mimetype,
-      },
-      body: req.file.buffer,
-    });
-
-    if (!putRes.ok) {
-      const errText = await putRes.text();
-      console.error('Blob PUT error:', errText);
-      return res.status(500).json({ error: 'Error al subir archivo a Blob' });
-    }
-
-    // 3. Save the download URL to SystemConfig
-    const downloadUrl = blobData.downloadUrl || uploadUrl;
-    await upsertConfig('shop_logo_url', downloadUrl);
+    // Save the download URL to SystemConfig
+    await upsertConfig('shop_logo_url', blob.url);
 
     res.json({
       success: true,
-      url: downloadUrl,
+      url: blob.url,
       message: 'Logo actualizado',
     });
   } catch (err) {
