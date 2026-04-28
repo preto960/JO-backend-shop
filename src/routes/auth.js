@@ -1,5 +1,8 @@
 import express from 'express';
 import prisma, { ensureColumns } from '../lib/prisma.js';
+import speakeasy from 'speakeasy';
+import QRCode from 'qrcode';
+import crypto from 'crypto';
 import {
   hashPassword,
   comparePassword,
@@ -28,6 +31,8 @@ const formatUserResponse = async (user) => {
     birthdate: user.birthdate,
     active: user.active,
     twoFactorEnabled: user.twoFactorEnabled || false,
+    twoFactorType: user.twoFactorType || null,
+    hasBackupCodes: !!(user.twoFactorBackupCodes && JSON.parse(user.twoFactorBackupCodes).length > 0),
     emailVerified: user.emailVerified,
     createdAt: user.createdAt,
     roles,
@@ -176,6 +181,19 @@ router.post('/login', async (req, res, next) => {
 
     // === 2FA: Solo si el usuario lo tiene activado ===
     if (user.twoFactorEnabled) {
+      const twoFactorType = user.twoFactorType || 'email';
+
+      if (twoFactorType === 'totp') {
+        // TOTP: el usuario debe ingresar el código de su app authenticator
+        return res.json({
+          requiresOtp: true,
+          email: user.email,
+          twoFactorType: 'totp',
+          message: 'Ingresa el codigo de tu aplicacion authenticator',
+        });
+      }
+
+      // Email: enviar código OTP por correo (flujo existente)
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
@@ -205,6 +223,7 @@ router.post('/login', async (req, res, next) => {
       return res.json({
         requiresOtp: true,
         email: user.email,
+        twoFactorType: 'email',
         message: isEmailConfigured()
           ? 'Codigo de verificacion enviado a tu email'
           : 'Codigo generado (SMTP no configurado)',
@@ -236,10 +255,10 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-// POST /auth/login-verify - Verificar OTP y completar login
+// POST /auth/login-verify - Verificar OTP y completar login (email o TOTP o backup code)
 router.post('/login-verify', async (req, res, next) => {
   try {
-    const { email, code } = req.body;
+    const { email, code, type } = req.body;
 
     if (!email || !code) {
       return res.status(400).json({
@@ -248,30 +267,7 @@ router.post('/login-verify', async (req, res, next) => {
     }
 
     const sanitizedEmail = sanitize(email)?.toLowerCase();
-
-    // Buscar OTP valido
-    const otp = await prisma.otpVerification.findFirst({
-      where: {
-        email: sanitizedEmail,
-        code,
-        type: 'login',
-        verified: false,
-        expiresAt: { gt: new Date() },
-      },
-    });
-
-    if (!otp) {
-      return res.status(400).json({
-        error: 'Codigo invalido, expirado o ya verificado',
-        code: 'INVALID_OTP',
-      });
-    }
-
-    // Marcar OTP como verificado
-    await prisma.otpVerification.update({
-      where: { id: otp.id },
-      data: { verified: true },
-    });
+    const verifyType = type || 'email'; // 'email' | 'totp' | 'backup'
 
     // Buscar usuario
     const user = await prisma.user.findUnique({
@@ -281,6 +277,79 @@ router.post('/login-verify', async (req, res, next) => {
     if (!user || !user.active) {
       return res.status(401).json({
         error: 'Usuario no encontrado o inactivo',
+      });
+    }
+
+    if (verifyType === 'totp') {
+      // Verificar código TOTP de la app authenticator
+      if (!user.twoFactorSecret) {
+        return res.status(400).json({
+          error: 'TOTP no configurado para este usuario',
+          code: 'TOTP_NOT_CONFIGURED',
+        });
+      }
+
+      const verified = speakeasy.totp.verify({
+        secret: user.twoFactorSecret,
+        encoding: 'base32',
+        token: code,
+        window: 1, // Permite 1 periodo antes/después
+      });
+
+      if (!verified) {
+        return res.status(400).json({
+          error: 'Codigo TOTP invalido',
+          code: 'INVALID_TOTP',
+        });
+      }
+    } else if (verifyType === 'backup') {
+      // Verificar código de recuperación (backup code)
+      if (!user.twoFactorBackupCodes) {
+        return res.status(400).json({
+          error: 'No hay codigos de recuperacion configurados',
+          code: 'NO_BACKUP_CODES',
+        });
+      }
+
+      const backupCodes = JSON.parse(user.twoFactorBackupCodes);
+      const codeIndex = backupCodes.indexOf(code);
+
+      if (codeIndex === -1) {
+        return res.status(400).json({
+          error: 'Codigo de recuperacion invalido',
+          code: 'INVALID_BACKUP_CODE',
+        });
+      }
+
+      // Remover el código usado (cada código es de un solo uso)
+      backupCodes.splice(codeIndex, 1);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { twoFactorBackupCodes: JSON.stringify(backupCodes) },
+      });
+    } else {
+      // Email OTP (flujo existente)
+      const otp = await prisma.otpVerification.findFirst({
+        where: {
+          email: sanitizedEmail,
+          code,
+          type: 'login',
+          verified: false,
+          expiresAt: { gt: new Date() },
+        },
+      });
+
+      if (!otp) {
+        return res.status(400).json({
+          error: 'Codigo invalido, expirado o ya verificado',
+          code: 'INVALID_OTP',
+        });
+      }
+
+      // Marcar OTP como verificado
+      await prisma.otpVerification.update({
+        where: { id: otp.id },
+        data: { verified: true },
       });
     }
 
@@ -298,6 +367,8 @@ router.post('/login-verify', async (req, res, next) => {
         email: user.email,
         phone: user.phone,
         twoFactorEnabled: user.twoFactorEnabled || false,
+        twoFactorType: user.twoFactorType || null,
+        hasBackupCodes: !!(user.twoFactorBackupCodes && JSON.parse(user.twoFactorBackupCodes).length > 0),
         roles,
         permissions,
       },
@@ -517,7 +588,15 @@ router.put('/two-factor', async (req, res, next) => {
 
     await prisma.user.update({
       where: { id: decoded.id },
-      data: { twoFactorEnabled: enabled },
+      data: {
+        twoFactorEnabled: enabled,
+        // Al desactivar, limpiar tipo, secret y backup codes
+        ...(!enabled && {
+          twoFactorType: null,
+          twoFactorSecret: null,
+          twoFactorBackupCodes: null,
+        }),
+      },
     });
 
     res.json({
@@ -758,6 +837,187 @@ router.post('/2fa/resend-code', async (req, res, next) => {
 
     res.json({
       message: 'Codigo de verificacion reenviado a tu correo',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// 2FA TOTP ENDPOINTS - Authenticator App (Google Auth / Authy)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper: Generar códigos de recuperación
+const generateBackupCodes = (count = 10) => {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    codes.push(
+      crypto.randomBytes(4).toString('hex').toUpperCase().match(/.{1,4}/g).join('-')
+    );
+  }
+  return codes;
+};
+
+// GET /auth/2fa/totp/setup - Genera secret TOTP + QR code
+router.get('/2fa/totp/setup', async (req, res, next) => {
+  try {
+    const decoded = await getAuthenticatedUser(req.headers.authorization);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Token requerido', code: 'AUTH_REQUIRED' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, twoFactorEnabled: true, twoFactorType: true, active: true },
+    });
+
+    if (!user || !user.active) {
+      return res.status(404).json({ error: 'Usuario no encontrado o inactivo' });
+    }
+
+    // Si ya tiene TOTP activo, no permitir regenerar sin desactivar primero
+    if (user.twoFactorEnabled && user.twoFactorType === 'totp') {
+      return res.status(400).json({
+        error: 'TOTP ya esta activado. Desactiva primero para configurar uno nuevo.',
+        code: 'TOTP_ALREADY_ENABLED',
+      });
+    }
+
+    // Generar secret TOTP
+    const secret = speakeasy.generateSecret({
+      name: `JO-Shop (${user.email})`,
+      issuer: 'JO-Shop',
+    });
+
+    // Generar QR code como data URI
+    const qrDataUri = await QRCode.toDataURL(secret.otpauth_url);
+
+    // Guardar el secret temporalmente (sin activar 2FA aún)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { twoFactorSecret: secret.base32 },
+    });
+
+    res.json({
+      message: 'Escanea este codigo QR con tu app authenticator',
+      secret: secret.base32,
+      qrCode: qrDataUri,
+      otpauthUrl: secret.otpauth_url,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/2fa/totp/enable - Verifica que el usuario escaneó el QR correctamente
+router.post('/2fa/totp/enable', async (req, res, next) => {
+  try {
+    const decoded = await getAuthenticatedUser(req.headers.authorization);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Token requerido', code: 'AUTH_REQUIRED' });
+    }
+
+    const { code } = req.body;
+
+    if (!code || code.length !== 6) {
+      return res.status(400).json({
+        error: 'Codigo de 6 digitos requerido',
+        code: 'INVALID_CODE',
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, twoFactorSecret: true, twoFactorEnabled: true },
+    });
+
+    if (!user || !user.twoFactorSecret) {
+      return res.status(400).json({
+        error: 'Primero debes generar el secret TOTP (GET /auth/2fa/totp/setup)',
+        code: 'TOTP_NOT_SETUP',
+      });
+    }
+
+    // Verificar el código TOTP
+    const verified = speakeasy.totp.verify({
+      secret: user.twoFactorSecret,
+      encoding: 'base32',
+      token: code,
+      window: 1,
+    });
+
+    if (!verified) {
+      return res.status(400).json({
+        error: 'Codigo invalido. Verifica que tu app authenticator este configurada correctamente.',
+        code: 'INVALID_TOTP',
+      });
+    }
+
+    // Generar códigos de recuperación
+    const backupCodes = generateBackupCodes(10);
+
+    // Activar 2FA con TOTP
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: {
+        twoFactorEnabled: true,
+        twoFactorType: 'totp',
+        twoFactorBackupCodes: JSON.stringify(backupCodes),
+      },
+    });
+
+    // Obtener usuario actualizado
+    const updatedUser = await prisma.user.findUnique({ where: { id: decoded.id } });
+    const userResponse = await formatUserResponse(updatedUser);
+
+    res.json({
+      message: 'Autenticacion con app authenticator activada exitosamente',
+      twoFactorEnabled: true,
+      twoFactorType: 'totp',
+      backupCodes, // Solo se muestran UNA VEZ
+      user: userResponse,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /auth/2fa/backup-codes - Generar nuevos códigos de recuperación
+router.get('/2fa/backup-codes', async (req, res, next) => {
+  try {
+    const decoded = await getAuthenticatedUser(req.headers.authorization);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Token requerido', code: 'AUTH_REQUIRED' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, twoFactorEnabled: true, twoFactorType: true, active: true },
+    });
+
+    if (!user || !user.active) {
+      return res.status(404).json({ error: 'Usuario no encontrado o inactivo' });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.status(400).json({
+        error: 'Debes tener 2FA activado para generar codigos de recuperacion',
+        code: '2FA_NOT_ENABLED',
+      });
+    }
+
+    // Generar nuevos códigos de recuperación
+    const backupCodes = generateBackupCodes(10);
+
+    // Guardar en la BD (reemplaza los anteriores)
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { twoFactorBackupCodes: JSON.stringify(backupCodes) },
+    });
+
+    res.json({
+      message: 'Nuevos codigos de recuperacion generados. Guardalos en un lugar seguro.',
+      backupCodes,
     });
   } catch (err) {
     next(err);
