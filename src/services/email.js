@@ -1,9 +1,10 @@
 import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
-// Crear transporter reutilizable
+// ─── Transporter Nodemailer (SMTP - fallback) ───────────────────────────
 let transporter = null;
 
-function getTransporter() {
+function getSmtpTransporter() {
   if (transporter) return transporter;
 
   const smtpHost = process.env.SMTP_HOST;
@@ -12,8 +13,6 @@ function getTransporter() {
   const smtpPass = process.env.SMTP_PASS;
 
   if (!smtpHost || !smtpUser || !smtpPass) {
-    console.warn('[Email] SMTP no configurado. Los correos no se enviaran.');
-    console.warn('[Email] Configura SMTP_HOST, SMTP_USER, SMTP_PASS en .env');
     return null;
   }
 
@@ -30,17 +29,96 @@ function getTransporter() {
   return transporter;
 }
 
-export function isEmailConfigured() {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+// ─── Resend Client ──────────────────────────────────────────────────────
+let resendClient = null;
+
+function getResendClient() {
+  if (resendClient) return resendClient;
+
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return null;
+
+  resendClient = new Resend(apiKey);
+  return resendClient;
+}
+
+// ─── Config Check ───────────────────────────────────────────────────────
+
+/**
+ * Retorna el proveedor activo: 'resend', 'smtp', o null
+ */
+export function getEmailProvider() {
+  if (process.env.RESEND_API_KEY) return 'resend';
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) return 'smtp';
+  return null;
 }
 
 /**
- * Enviar correo electronico
+ * Indica si hay algún proveedor de email configurado
  */
+export function isEmailConfigured() {
+  return getEmailProvider() !== null;
+}
+
+// ─── Send Email (dispatch al proveedor activo) ──────────────────────────
+
 export async function sendEmail({ to, subject, html, text }) {
-  const transport = getTransporter();
+  const provider = getEmailProvider();
+
+  if (provider === 'resend') {
+    return sendViaResend({ to, subject, html, text });
+  }
+
+  if (provider === 'smtp') {
+    return sendViaSmtp({ to, subject, html, text });
+  }
+
+  // Ninguno configurado
+  console.log(`[Email] No hay proveedor configurado. Correo NO enviado: "${subject}" -> ${to}`);
+  console.log('[Email] Configura RESEND_API_KEY o SMTP_HOST/SMTP_USER/SMTP_PASS en .env');
+  return { success: false, reason: 'no_provider_configured' };
+}
+
+// ─── Resend Provider ────────────────────────────────────────────────────
+
+async function sendViaResend({ to, subject, html, text }) {
+  const client = getResendClient();
+  if (!client) {
+    console.log(`[Email-Resend] API Key no configurada. Correo NO enviado: "${subject}" -> ${to}`);
+    return { success: false, reason: 'resend_not_configured' };
+  }
+
+  try {
+    const fromAddress = process.env.RESEND_FROM || process.env.SMTP_FROM || 'onboarding@resend.dev';
+    const fromName = process.env.SMTP_FROM_NAME || 'JO-Shop';
+
+    const { data, error } = await client.emails.send({
+      from: `${fromName} <${fromAddress}>`,
+      to: [to],
+      subject,
+      html,
+      text: text || html?.replace(/<[^>]*>/g, ''),
+    });
+
+    if (error) {
+      console.error(`[Email-Resend] Error:`, error.message);
+      return { success: false, error: error.message };
+    }
+
+    console.log(`[Email-Resend] Correo enviado: "${subject}" -> ${to} (ID: ${data?.id})`);
+    return { success: true, messageId: data?.id };
+  } catch (err) {
+    console.error(`[Email-Resend] Error enviando correo:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+// ─── SMTP Provider (nodemailer) ────────────────────────────────────────
+
+async function sendViaSmtp({ to, subject, html, text }) {
+  const transport = getSmtpTransporter();
   if (!transport) {
-    console.log(`[Email] Correo NO enviado (SMTP no configurado): "${subject}" → ${to}`);
+    console.log(`[Email-SMTP] SMTP no configurado. Correo NO enviado: "${subject}" -> ${to}`);
     return { success: false, reason: 'smtp_not_configured' };
   }
 
@@ -56,13 +134,15 @@ export async function sendEmail({ to, subject, html, text }) {
       text: text || html?.replace(/<[^>]*>/g, ''),
     });
 
-    console.log(`[Email] Correo enviado: "${subject}" → ${to} (ID: ${info.messageId})`);
+    console.log(`[Email-SMTP] Correo enviado: "${subject}" -> ${to} (ID: ${info.messageId})`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
-    console.error(`[Email] Error enviando correo:`, err.message);
+    console.error(`[Email-SMTP] Error enviando correo:`, err.message);
     return { success: false, error: err.message };
   }
 }
+
+// ─── Email Templates ────────────────────────────────────────────────────
 
 /**
  * Enviar correo de bienvenida al registrarse
@@ -110,8 +190,12 @@ export async function sendWelcomeEmail({ name, email }) {
 export async function sendOtpEmail({ to, code, type = 'login' }) {
   const typeLabels = {
     login: 'Inicio de sesion',
+    'login-2fa': 'Verificacion de inicio de sesion',
     register: 'Verificacion de registro',
-    reset: 'Restablecimiento de contraseña',
+    reset: 'Restablecimiento de contrasena',
+    '2fa-setup': 'Configuracion de autenticacion en dos pasos',
+    '2fa-enable': 'Activacion de autenticacion en dos pasos',
+    '2fa-disable': 'Desactivacion de autenticacion en dos pasos',
   };
 
   const typeLabel = typeLabels[type] || 'Verificacion';
@@ -137,7 +221,7 @@ export async function sendOtpEmail({ to, code, type = 'login' }) {
         </p>
         <div style="background: #fff3cd; padding: 12px 16px; border-radius: 8px; margin-top: 20px;">
           <p style="margin: 0; color: #856404; font-size: 13px;">
-            Si no solicitaste este codigo, puedes ignorar este correo. Alguien quizo iniciar sesion con tu correo.
+            Si no solicitaste este codigo, puedes ignorar este correo. Alguien quizas intento acceder a tu cuenta.
           </p>
         </div>
         <div style="text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
@@ -161,4 +245,5 @@ export default {
   sendWelcomeEmail,
   sendOtpEmail,
   isEmailConfigured,
+  getEmailProvider,
 };

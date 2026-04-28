@@ -527,4 +527,237 @@ router.put('/two-factor', async (req, res, next) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// 2FA ENDPOINTS - Autenticacion en dos pasos con verificacion por email
+// ═══════════════════════════════════════════════════════════════════════
+
+// Helper: Extraer usuario del token JWT (reutilizable)
+const getAuthenticatedUser = async (authHeader) => {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const { verifyToken } = await import('../services/auth.js');
+  const decoded = verifyToken(authHeader.split(' ')[1]);
+  if (!decoded || decoded.valid === false) return null;
+  return decoded;
+};
+
+// POST /auth/2fa/send-code - Enviar codigo para activar/desactivar 2FA
+router.post('/2fa/send-code', async (req, res, next) => {
+  try {
+    const decoded = await getAuthenticatedUser(req.headers.authorization);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Token requerido', code: 'AUTH_REQUIRED' });
+    }
+
+    const { action } = req.body;
+    if (action !== 'enable' && action !== 'disable') {
+      return res.status(400).json({
+        error: 'Accion invalida. Usa "enable" o "disable"',
+        code: 'INVALID_ACTION',
+      });
+    }
+
+    // Verificar email configurado
+    if (!isEmailConfigured()) {
+      return res.status(400).json({
+        error: 'No se puede configurar 2FA. El servidor de correos no esta configurado.',
+        code: 'EMAIL_NOT_CONFIGURED',
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, email: true, twoFactorEnabled: true, active: true },
+    });
+
+    if (!user || !user.active) {
+      return res.status(404).json({ error: 'Usuario no encontrado o inactivo' });
+    }
+
+    // Validar accion vs estado actual
+    if (action === 'enable' && user.twoFactorEnabled) {
+      return res.status(400).json({
+        error: 'La autenticacion en dos pasos ya esta activada',
+        code: 'ALREADY_ENABLED',
+      });
+    }
+    if (action === 'disable' && !user.twoFactorEnabled) {
+      return res.status(400).json({
+        error: 'La autenticacion en dos pasos ya esta desactivada',
+        code: 'ALREADY_DISABLED',
+      });
+    }
+
+    // Generar OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const otpType = `2fa-${action}`;
+
+    // Eliminar OTPs anteriores para este tipo
+    await prisma.otpVerification.deleteMany({
+      where: { userId: user.id, type: otpType },
+    });
+
+    // Crear nuevo OTP
+    await prisma.otpVerification.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        code: otpCode,
+        type: otpType,
+        expiresAt,
+      },
+    });
+
+    // Enviar OTP por email
+    await sendOtpEmail({ to: user.email, code: otpCode, type: otpType });
+
+    res.json({
+      message: action === 'enable'
+        ? 'Codigo de verificacion enviado para activar 2FA'
+        : 'Codigo de verificacion enviado para desactivar 2FA',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/2fa/verify-setup - Verificar codigo y activar/desactivar 2FA
+router.post('/2fa/verify-setup', async (req, res, next) => {
+  try {
+    const decoded = await getAuthenticatedUser(req.headers.authorization);
+    if (!decoded) {
+      return res.status(401).json({ error: 'Token requerido', code: 'AUTH_REQUIRED' });
+    }
+
+    const { code, action } = req.body;
+
+    if (!code || code.length !== 6) {
+      return res.status(400).json({
+        error: 'Codigo de 6 digitos requerido',
+        code: 'INVALID_CODE',
+      });
+    }
+
+    if (action !== 'enable' && action !== 'disable') {
+      return res.status(400).json({
+        error: 'Accion invalida. Usa "enable" o "disable"',
+        code: 'INVALID_ACTION',
+      });
+    }
+
+    const otpType = `2fa-${action}`;
+
+    // Buscar OTP valido
+    const otp = await prisma.otpVerification.findFirst({
+      where: {
+        userId: decoded.id,
+        code,
+        type: otpType,
+        verified: false,
+        expiresAt: { gt: new Date() },
+      },
+    });
+
+    if (!otp) {
+      return res.status(400).json({
+        error: 'Codigo invalido, expirado o ya verificado',
+        code: 'INVALID_OTP',
+      });
+    }
+
+    // Marcar OTP como verificado
+    await prisma.otpVerification.update({
+      where: { id: otp.id },
+      data: { verified: true },
+    });
+
+    // Actualizar estado 2FA del usuario
+    const new2FAState = action === 'enable';
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { twoFactorEnabled: new2FAState },
+    });
+
+    // Obtener usuario actualizado con roles y permisos
+    const updatedUser = await prisma.user.findUnique({ where: { id: decoded.id } });
+    const userResponse = await formatUserResponse(updatedUser);
+
+    res.json({
+      message: new2FAState
+        ? 'Autenticacion en dos pasos activada exitosamente'
+        : 'Autenticacion en dos pasos desactivada exitosamente',
+      twoFactorEnabled: new2FAState,
+      user: userResponse,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/2fa/resend-code - Reenviar codigo OTP durante login 2FA
+router.post('/2fa/resend-code', async (req, res, next) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        error: 'Email valido es requerido',
+        code: 'INVALID_EMAIL',
+      });
+    }
+
+    const sanitizedEmail = sanitize(email)?.toLowerCase();
+
+    // Buscar usuario con 2FA activado
+    const user = await prisma.user.findUnique({
+      where: { email: sanitizedEmail },
+      select: { id: true, email: true, twoFactorEnabled: true, active: true },
+    });
+
+    if (!user || !user.active) {
+      // No revelar si el usuario existe por seguridad
+      return res.json({ message: 'Si el email esta registrado, se enviara un nuevo codigo' });
+    }
+
+    if (!user.twoFactorEnabled) {
+      return res.json({ message: 'Si el email esta registrado, se enviara un nuevo codigo' });
+    }
+
+    // Verificar email configurado
+    if (!isEmailConfigured()) {
+      console.log(`[2FA-Resend] Email no configurado. Codigo para ${sanitizedEmail} no enviado.`);
+      return res.json({ message: 'Si el email esta registrado, se enviara un nuevo codigo' });
+    }
+
+    // Generar nuevo OTP
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    // Eliminar OTPs anteriores para login
+    await prisma.otpVerification.deleteMany({
+      where: { email: sanitizedEmail, type: 'login' },
+    });
+
+    // Crear nuevo OTP
+    await prisma.otpVerification.create({
+      data: {
+        userId: user.id,
+        email: user.email,
+        code: otpCode,
+        type: 'login',
+        expiresAt,
+      },
+    });
+
+    // Enviar OTP por email
+    await sendOtpEmail({ to: user.email, code: otpCode, type: 'login-2fa' });
+
+    res.json({
+      message: 'Codigo de verificacion reenviado a tu correo',
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
