@@ -82,3 +82,25 @@ Stage Summary:
 - Accent derivado automáticamente (hue shift de 30°)
 - 71 instancias de primary-/accent- ahora son dinámicas sin cambios en componentes
 - Commit 79001db pusheado a main
+---
+Task ID: 1
+Agent: main
+Task: Fix prisma.$use error + expand landing page + add discount % + product batches
+
+Work Log:
+- Fixed prisma.$use() error by migrating to Prisma Client Extensions ($extends)
+- Made landing page full width (100%) except search bar and filters (maxWidth: 1200)
+- Added discountPercent field to Product model (schema, routes, auto-migration)
+- Created ProductBatch model with full CRUD routes
+- Auto-inserted 4 permissions for product_batches module
+- Added discount % field to product create/edit modal
+- Added "Lotes de productos" button in manage-products page
+- Created new product-batches management page with dynamic product rows
+- Updated sidebar menu with Lotes entry (permission-gated)
+- Updated products grid to 6 cols @1440px, 7 cols @1600px
+- Updated offers filter to use discountPercent > 0
+
+Stage Summary:
+- Backend: commit a978b0f pushed to JO-backend-shop
+- Frontend: commit 9205986 pushed to JO-frontend-shop
+- All changes deployed to GitHub
