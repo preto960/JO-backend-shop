@@ -3,7 +3,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 
 const globalForPrisma = globalThis;
 
-function createPrismaClient() {
+function createBaseClient() {
   const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
   return new PrismaClient({
     adapter,
@@ -11,21 +11,57 @@ function createPrismaClient() {
   });
 }
 
-const prisma = globalForPrisma.prisma || createPrismaClient();
+// ─── Tablas con soft delete ─────────────────────────────────────────────────
+const SOFT_DELETE_MODELS = ['Role', 'Address', 'Store', 'Category', 'Product', 'Banner'];
+const SOFT_DELETE_TABLES = ['roles', 'addresses', 'stores', 'categories', 'products', 'banners'];
+
+// ─── Interceptor de soft delete usando Prisma Client Extensions ─────────────
+// Reemplaza el antiguo prisma.$use() que fue eliminado en Prisma 5+
+function createInterceptor() {
+  return async ({ args, query, model }) => {
+    // Extraer flag custom y limpiar args antes de pasar a Prisma
+    const includeDeleted = args?.includeDeleted;
+    const cleanArgs = { ...args };
+    delete cleanArgs.includeDeleted;
+
+    // Si el modelo tiene soft delete y no se pidió incluir eliminados, filtrar
+    if (SOFT_DELETE_MODELS.includes(model) && !includeDeleted) {
+      const hasDeletedAtFilter = cleanArgs?.where?.deletedAt !== undefined;
+      if (!hasDeletedAtFilter) {
+        cleanArgs.where = { ...cleanArgs.where, deletedAt: null };
+      }
+    }
+
+    return query(cleanArgs);
+  };
+}
+
+function createExtendedClient() {
+  const baseClient = createBaseClient();
+  const interceptor = createInterceptor();
+
+  return baseClient.$extends({
+    query: {
+      $allModels: {
+        // Interceptamos todas las operaciones de lectura
+        findMany: interceptor,
+        findFirst: interceptor,
+        findFirstOrThrow: interceptor,
+        findUnique: interceptor,
+        findUniqueOrThrow: interceptor,
+        count: interceptor,
+        aggregate: interceptor,
+        groupBy: interceptor,
+      },
+    },
+  });
+}
+
+const prisma = globalForPrisma.prisma || createExtendedClient();
 
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.prisma = prisma;
 }
-
-// ─── Tablas con soft delete ─────────────────────────────────────────────────
-const SOFT_DELETE_TABLES = [
-  'roles',
-  'addresses',
-  'stores',
-  'categories',
-  'products',
-  'banners',
-];
 
 // ─── Auto-migration: crear columnas faltantes en producción ─────────────────
 let _migrated = false;
@@ -77,45 +113,5 @@ export async function ensureColumns() {
     }
   }
 }
-
-// ─── Prisma Middleware: filtrar registros eliminados (soft delete) ──────────
-// Aplica automáticamente `where: { deletedAt: null }` a todas las queries
-// de las tablas con soft delete, excepto cuando se usa `findDeleted` en args.
-prisma.$use(async (params, next) => {
-  const model = params.model;
-  const modelName = model ? model.charAt(0).toUpperCase() + model.slice(1) : '';
-
-  // Mapear nombre del modelo a la tabla de soft delete
-  const softDeleteModels = {
-    Role: 'roles',
-    Address: 'addresses',
-    Store: 'stores',
-    Category: 'categories',
-    Product: 'products',
-    Banner: 'banners',
-  };
-
-  const isSoftDeleteModel = modelName && softDeleteModels[modelName];
-
-  // Si el modelo tiene soft delete y la operación es de lectura, filtrar eliminados
-  if (isSoftDeleteModel && !params.args?.includeDeleted) {
-    const readActions = ['findMany', 'findFirst', 'findUnique', 'count', 'aggregate', 'groupBy'];
-    if (readActions.includes(params.action)) {
-      // No filtrar si se busca explícitamente por deletedAt
-      const hasDeletedAtFilter = params.args?.where?.deletedAt !== undefined;
-      if (!hasDeletedAtFilter) {
-        params.args = {
-          ...params.args,
-          where: {
-            ...params.args.where,
-            deletedAt: null,
-          },
-        };
-      }
-    }
-  }
-
-  return next(params);
-});
 
 export default prisma;
