@@ -174,7 +174,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /products - Crear producto (requiere permiso products.create)
 router.post('/', authenticate, requirePermission('products.create'), async (req, res, next) => {
   try {
-    const { name, description, price, image, thumbnail, stock, categoryId, storeIds, active } = req.body;
+    const { name, description, price, discountPercent, image, thumbnail, stock, categoryId, storeIds, active } = req.body;
 
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
@@ -227,6 +227,7 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
         slug: finalSlug,
         description: description ? sanitize(description) : null,
         price: parseFloat(price),
+        discountPercent: discountPercent !== undefined ? parseFloat(discountPercent) : 0,
         image: image || null,
         thumbnail: thumbnail || null,
         stock: parseInt(stock) || 0,
@@ -283,7 +284,7 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
       }
     }
 
-    const { name, description, price, image, thumbnail, stock, categoryId, active, storeIds } = req.body;
+    const { name, description, price, discountPercent, image, thumbnail, stock, categoryId, active, storeIds } = req.body;
     const updateData = {};
 
     if (name !== undefined) {
@@ -304,6 +305,14 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
         return res.status(400).json({ error: 'Precio no puede ser negativo', field: 'price' });
       }
       updateData.price = parseFloat(price);
+    }
+
+    if (discountPercent !== undefined) {
+      const val = parseFloat(discountPercent);
+      if (val < 0 || val > 100) {
+        return res.status(400).json({ error: 'Descuento debe estar entre 0 y 100', field: 'discountPercent' });
+      }
+      updateData.discountPercent = val;
     }
 
     if (image !== undefined) updateData.image = image || null;

@@ -14,6 +14,7 @@ import notificationsRouter from './routes/notifications.js';
 import verificationRouter from './routes/verification.js';
 import pushRoutes from './routes/push.js';
 import bannersRouter from './routes/banners.js';
+import productBatchesRouter from './routes/product-batches.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -43,6 +44,7 @@ app.use('/notifications', notificationsRouter);
 app.use('/auth/otp', verificationRouter);
 app.use('/api/push', pushRoutes);
 app.use('/banners', bannersRouter);
+app.use('/product-batches', productBatchesRouter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -109,6 +111,12 @@ app.get('/', (req, res) => {
       create: 'POST /stores (stores.create / editor)',
       update: 'PUT /stores/:id (stores.edit / own store)',
       delete: 'DELETE /stores/:id (stores.delete / admin)',
+    },
+    productBatches: {
+      list: 'GET /product-batches (product_batches.view)',
+      detail: 'GET /product-batches/:id (product_batches.view)',
+      create: 'POST /product-batches (product_batches.create)',
+      delete: 'DELETE /product-batches/:id (product_batches.delete)',
     },
     addresses: {
       list: 'GET /addresses (auth)',

@@ -12,8 +12,8 @@ function createBaseClient() {
 }
 
 // ─── Tablas con soft delete ─────────────────────────────────────────────────
-const SOFT_DELETE_MODELS = ['Role', 'Address', 'Store', 'Category', 'Product', 'Banner'];
-const SOFT_DELETE_TABLES = ['roles', 'addresses', 'stores', 'categories', 'products', 'banners'];
+const SOFT_DELETE_MODELS = ['Role', 'Address', 'Store', 'Category', 'Product', 'Banner', 'ProductBatch'];
+const SOFT_DELETE_TABLES = ['roles', 'addresses', 'stores', 'categories', 'products', 'banners', 'product_batches'];
 
 // ─── Interceptor de soft delete usando Prisma Client Extensions ─────────────
 // Reemplaza el antiguo prisma.$use() que fue eliminado en Prisma 5+
@@ -111,6 +111,68 @@ export async function ensureColumns() {
     } catch (err) {
       console.error(`[DB] Error en auto-migration soft delete ${table}:`, err.message);
     }
+  }
+
+  // Columna discount_percent en products
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'products' AND column_name = 'discount_percent';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando columna products.discount_percent...');
+      await prisma.$executeRawUnsafe(`ALTER TABLE products ADD COLUMN discount_percent FLOAT NOT NULL DEFAULT 0;`);
+      console.log('[DB] Columna products.discount_percent creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration products.discount_percent:', err.message);
+  }
+
+  // Tabla product_batches
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'product_batches';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando tabla product_batches...');
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS product_batches (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(200) NOT NULL,
+          description TEXT,
+          discount_percent FLOAT NOT NULL DEFAULT 0,
+          category_id INTEGER REFERENCES categories(id),
+          store_ids TEXT,
+          product_count INTEGER NOT NULL DEFAULT 0,
+          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+          deleted_by INTEGER REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_product_batches_status ON product_batches(status);
+        CREATE INDEX IF NOT EXISTS idx_product_batches_category_id ON product_batches(category_id);
+      `);
+      console.log('[DB] Tabla product_batches creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration product_batches:', err.message);
+  }
+
+  // Permisos para product_batches
+  try {
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO permissions (name, code, module, description, "created_at") VALUES 
+        ('Ver lotes', 'product_batches.view', 'product_batches', 'Ver lotes de productos', NOW()),
+        ('Crear lotes', 'product_batches.create', 'product_batches', 'Crear lotes de productos', NOW()),
+        ('Editar lotes', 'product_batches.edit', 'product_batches', 'Editar lotes de productos', NOW()),
+        ('Eliminar lotes', 'product_batches.delete', 'product_batches', 'Eliminar lotes de productos', NOW())
+      ON CONFLICT (code) DO NOTHING;
+    `);
+    console.log('[DB] Permisos de product_batches verificados.');
+  } catch (err) {
+    console.error('[DB] Error insertando permisos product_batches:', err.message);
   }
 }
 

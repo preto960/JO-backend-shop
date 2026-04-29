@@ -107,6 +107,7 @@ model User {
   deletedStores      Store[]    @relation("StoreDeletedBy")
   deletedAddresses   Address[]  @relation("AddressDeletedBy")
   deletedBanners     Banner[]   @relation("BannerDeletedBy")
+  createdBatches    ProductBatch[]  @relation("BatchCreator")
 
   @@index([email])
   @@index([active])
@@ -178,6 +179,7 @@ model Category {
   deletedBy Int?      @map("deleted_by")
 
   products  Product[]
+  batches    ProductBatch[]
   deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedBy], references: [id])
 
   @@map("categories")
@@ -192,6 +194,7 @@ model Product {
   image       String?   @db.VarChar(500)
   thumbnail   String?   @db.VarChar(500)
   stock       Int       @default(0)
+  discountPercent Float   @default(0) @map("discount_percent")
   active      Boolean   @default(true)
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
@@ -352,4 +355,28 @@ model OtpVerification {
   @@index([email])
   @@index([userId])
   @@map("otp_verifications")
+}
+
+// ─── LOTES DE PRODUCTOS ──────────────────────────────────────────────
+
+model ProductBatch {
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(200)
+  description     String?   @db.Text
+  discountPercent Float     @default(0) @map("discount_percent")
+  categoryId      Int?      @map("category_id")
+  storeIds        String?   @db.Text
+  productCount    Int       @default(0) @map("product_count")
+  status          String    @default("pending") @db.VarChar(20)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+  deletedAt       DateTime? @map("deleted_at")
+  deletedBy       Int?      @map("deleted_by")
+
+  createdByUser   User?     @relation("BatchCreator", fields: [deletedBy], references: [id])
+  category        Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([status])
+  @@index([categoryId])
+  @@map("product_batches")
 }
