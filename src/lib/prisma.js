@@ -197,20 +197,7 @@ export async function ensureColumns() {
     console.error('[DB] Error en auto-migration product_batch_items:', err.message);
   }
 
-  // Permisos para product_batches
-  try {
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO permissions (name, code, module, description, "created_at") VALUES 
-        ('Ver lotes', 'product_batches.view', 'product_batches', 'Ver lotes de productos', NOW()),
-        ('Crear lotes', 'product_batches.create', 'product_batches', 'Crear lotes de productos', NOW()),
-        ('Editar lotes', 'product_batches.edit', 'product_batches', 'Editar lotes de productos', NOW()),
-        ('Eliminar lotes', 'product_batches.delete', 'product_batches', 'Eliminar lotes de productos', NOW())
-      ON CONFLICT (code) DO NOTHING;
-    `);
-    console.log('[DB] Permisos de product_batches verificados.');
-  } catch (err) {
-    console.error('[DB] Error insertando permisos product_batches:', err.message);
-  }
+
 }
 
 export default prisma;

@@ -6,7 +6,7 @@ import { sanitize } from '../services/auth.js';
 const router = express.Router();
 
 // GET /product-batches - Listar lotes con sus productos
-router.get('/', authenticate, requirePermission('product_batches.view'), async (req, res, next) => {
+router.get('/', authenticate, requirePermission('batches.view'), async (req, res, next) => {
   try {
     const { page = 1, limit = 20, status } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
@@ -48,7 +48,7 @@ router.get('/', authenticate, requirePermission('product_batches.view'), async (
 });
 
 // GET /product-batches/:id - Detalle de lote con productos
-router.get('/:id', authenticate, requirePermission('product_batches.view'), async (req, res, next) => {
+router.get('/:id', authenticate, requirePermission('batches.view'), async (req, res, next) => {
   try {
     const batch = await prisma.productBatch.findUnique({
       where: { id: parseInt(req.params.id) },
@@ -76,7 +76,7 @@ router.get('/:id', authenticate, requirePermission('product_batches.view'), asyn
 
 // POST /product-batches - Crear lote con productos existentes
 // Selecciona productos existentes y les aplica el descuento
-router.post('/', authenticate, requirePermission('product_batches.create'), async (req, res, next) => {
+router.post('/', authenticate, requirePermission('batches.create'), async (req, res, next) => {
   try {
     const { name, description, discountPercent, productIds } = req.body;
 
@@ -140,7 +140,7 @@ router.post('/', authenticate, requirePermission('product_batches.create'), asyn
 });
 
 // PUT /product-batches/:id - Actualizar lote (cambiar descuento, agregar/quitar productos)
-router.put('/:id', authenticate, requirePermission('product_batches.edit'), async (req, res, next) => {
+router.put('/:id', authenticate, requirePermission('batches.edit'), async (req, res, next) => {
   try {
     const batchId = parseInt(req.params.id);
     const { name, description, discountPercent, productIds } = req.body;
@@ -246,7 +246,7 @@ router.put('/:id', authenticate, requirePermission('product_batches.edit'), asyn
 });
 
 // DELETE /product-batches/:id - Eliminar lote (soft delete) y resetear descuentos
-router.delete('/:id', authenticate, requirePermission('product_batches.delete'), async (req, res, next) => {
+router.delete('/:id', authenticate, requirePermission('batches.delete'), async (req, res, next) => {
   try {
     const batchId = parseInt(req.params.id);
 

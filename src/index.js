@@ -113,10 +113,11 @@ app.get('/', (req, res) => {
       delete: 'DELETE /stores/:id (stores.delete / admin)',
     },
     productBatches: {
-      list: 'GET /product-batches (product_batches.view)',
-      detail: 'GET /product-batches/:id (product_batches.view)',
-      create: 'POST /product-batches (product_batches.create)',
-      delete: 'DELETE /product-batches/:id (product_batches.delete)',
+      list: 'GET /product-batches (batches.view)',
+      detail: 'GET /product-batches/:id (batches.view)',
+      create: 'POST /product-batches (batches.create)',
+      edit: 'PUT /product-batches/:id (batches.edit)',
+      delete: 'DELETE /product-batches/:id (batches.delete)',
     },
     addresses: {
       list: 'GET /addresses (auth)',
