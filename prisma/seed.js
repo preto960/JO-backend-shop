@@ -74,6 +74,16 @@ const MODULES = {
       { name: 'Ver Dashboard', code: 'dashboard.view', description: 'Permite acceder al panel principal con estadísticas' },
     ],
   },
+  batches: {
+    name: 'Lotes',
+    permissions: [
+      { name: 'Ver menú Lotes', code: 'batches.view_menu', description: 'Permite ver el módulo de lotes en el menú' },
+      { name: 'Leer lotes', code: 'batches.read', description: 'Permite ver la lista y detalle de lotes' },
+      { name: 'Crear lotes', code: 'batches.create', description: 'Permite crear nuevos lotes de descuento' },
+      { name: 'Editar lotes', code: 'batches.edit', description: 'Permite editar lotes existentes' },
+      { name: 'Eliminar lotes', code: 'batches.delete', description: 'Permite eliminar lotes' },
+    ],
+  },
 };
 
 async function main() {
@@ -179,12 +189,13 @@ async function main() {
     })),
   });
 
-  // Editor: productos, categorías, tiendas + dashboard + ver pedidos
+  // Editor: productos, categorías, tiendas + dashboard + lotes + ver pedidos
   const editorPermCodes = [
     'dashboard.view_menu', 'dashboard.view',
     'products.view_menu', 'products.read', 'products.create', 'products.edit', 'products.delete',
     'categories.view_menu', 'categories.read', 'categories.create', 'categories.edit', 'categories.delete',
     'stores.view_menu', 'stores.read', 'stores.create', 'stores.edit',
+    'batches.view_menu', 'batches.read', 'batches.create', 'batches.edit', 'batches.delete',
     'orders.view_menu', 'orders.read',
   ];
   const editorPerms = allPermissions.filter(p => editorPermCodes.includes(p.code));
