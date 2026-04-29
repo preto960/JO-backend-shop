@@ -108,6 +108,7 @@ model User {
   deletedAddresses   Address[]  @relation("AddressDeletedBy")
   deletedBanners     Banner[]   @relation("BannerDeletedBy")
   createdBatches    ProductBatch[]  @relation("BatchCreator")
+  deletedBatches    ProductBatch[]  @relation("BatchDeleter")
 
   @@index([email])
   @@index([active])
@@ -179,7 +180,6 @@ model Category {
   deletedBy Int?      @map("deleted_by")
 
   products  Product[]
-  batches    ProductBatch[]
   deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedBy], references: [id])
 
   @@map("categories")
@@ -207,6 +207,7 @@ model Product {
 
   stores      ProductStore[]
   orderItems  OrderItem[]
+  batchItems  ProductBatchItem[]
 
   @@index([categoryId])
   @@index([active])
@@ -364,19 +365,33 @@ model ProductBatch {
   name            String    @db.VarChar(200)
   description     String?   @db.Text
   discountPercent Float     @default(0) @map("discount_percent")
-  categoryId      Int?      @map("category_id")
-  storeIds        String?   @db.Text
   productCount    Int       @default(0) @map("product_count")
-  status          String    @default("pending") @db.VarChar(20)
+  status          String    @default("active") @db.VarChar(20)
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
   deletedAt       DateTime? @map("deleted_at")
   deletedBy       Int?      @map("deleted_by")
+  createdBy       Int?      @map("created_by")
 
-  createdByUser   User?     @relation("BatchCreator", fields: [deletedBy], references: [id])
-  category        Category? @relation(fields: [categoryId], references: [id])
+  createdByUser   User?     @relation("BatchCreator", fields: [createdBy], references: [id])
+  deletedByUser   User?     @relation("BatchDeleter", fields: [deletedBy], references: [id])
+  items           ProductBatchItem[]
 
   @@index([status])
-  @@index([categoryId])
   @@map("product_batches")
+}
+
+model ProductBatchItem {
+  id         Int   @id @default(autoincrement())
+  batchId    Int   @map("batch_id")
+  productId  Int   @map("product_id")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  batch      ProductBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, productId])
+  @@index([batchId])
+  @@index([productId])
+  @@map("product_batch_items")
 }

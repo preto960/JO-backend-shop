@@ -128,7 +128,7 @@ export async function ensureColumns() {
     console.error('[DB] Error en auto-migration products.discount_percent:', err.message);
   }
 
-  // Tabla product_batches
+  // Tabla product_batches (actualizada con created_by)
   try {
     const result = await prisma.$queryRawUnsafe(`
       SELECT table_name FROM information_schema.tables
@@ -142,22 +142,59 @@ export async function ensureColumns() {
           name VARCHAR(200) NOT NULL,
           description TEXT,
           discount_percent FLOAT NOT NULL DEFAULT 0,
-          category_id INTEGER REFERENCES categories(id),
-          store_ids TEXT,
           product_count INTEGER NOT NULL DEFAULT 0,
-          status VARCHAR(20) NOT NULL DEFAULT 'pending',
+          status VARCHAR(20) NOT NULL DEFAULT 'active',
           created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
           deleted_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
-          deleted_by INTEGER REFERENCES users(id)
+          deleted_by INTEGER REFERENCES users(id),
+          created_by INTEGER REFERENCES users(id)
         );
         CREATE INDEX IF NOT EXISTS idx_product_batches_status ON product_batches(status);
-        CREATE INDEX IF NOT EXISTS idx_product_batches_category_id ON product_batches(category_id);
       `);
       console.log('[DB] Tabla product_batches creada.');
+    } else {
+      // Asegurar columna created_by exista
+      try {
+        const colResult = await prisma.$queryRawUnsafe(`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'product_batches' AND column_name = 'created_by';
+        `);
+        if (!colResult || colResult.length === 0) {
+          console.log('[DB] Creando columna product_batches.created_by...');
+          await prisma.$executeRawUnsafe(`ALTER TABLE product_batches ADD COLUMN created_by INTEGER REFERENCES users(id);`);
+        }
+      } catch (e) {
+        console.error('[DB] Error en auto-migration created_by:', e.message);
+      }
     }
   } catch (err) {
     console.error('[DB] Error en auto-migration product_batches:', err.message);
+  }
+
+  // Tabla product_batch_items
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'product_batch_items';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando tabla product_batch_items...');
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS product_batch_items (
+          id SERIAL PRIMARY KEY,
+          batch_id INTEGER NOT NULL REFERENCES product_batches(id) ON DELETE CASCADE,
+          product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          CONSTRAINT uq_batch_product UNIQUE (batch_id, product_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_product_batch_items_batch_id ON product_batch_items(batch_id);
+        CREATE INDEX IF NOT EXISTS idx_product_batch_items_product_id ON product_batch_items(product_id);
+      `);
+      console.log('[DB] Tabla product_batch_items creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration product_batch_items:', err.message);
   }
 
   // Permisos para product_batches
