@@ -159,7 +159,7 @@ router.put('/roles/:id', authenticate, requirePermission('users.edit'), async (r
   }
 });
 
-// DELETE /auth/roles/:id - Eliminar rol (requiere permiso users.delete)
+// DELETE /auth/roles/:id - Eliminar rol (soft delete)
 router.delete('/roles/:id', authenticate, requirePermission('users.delete'), async (req, res, next) => {
   try {
     const roleId = parseInt(req.params.id);
@@ -179,7 +179,14 @@ router.delete('/roles/:id', authenticate, requirePermission('users.delete'), asy
       });
     }
 
-    await prisma.role.delete({ where: { id: roleId } });
+    await prisma.role.update({
+      where: { id: roleId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+        active: false,
+      },
+    });
 
     res.json({ message: 'Rol eliminado correctamente' });
   } catch (err) {

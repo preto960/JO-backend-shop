@@ -217,7 +217,7 @@ router.put('/:id', authenticate, async (req, res, next) => {
   }
 });
 
-// DELETE /stores/:id - Eliminar tienda (solo admin)
+// DELETE /stores/:id - Eliminar tienda (soft delete, solo admin)
 router.delete('/:id', authenticate, async (req, res, next) => {
   try {
     const isAdmin = req.user.roles.includes('admin');
@@ -243,7 +243,14 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       });
     }
 
-    await prisma.store.delete({ where: { id: storeId } });
+    await prisma.store.update({
+      where: { id: storeId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+        active: false,
+      },
+    });
 
     res.json({ message: 'Tienda eliminada correctamente' });
   } catch (err) {

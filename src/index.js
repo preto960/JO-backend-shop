@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import prisma from './lib/prisma.js';
+import prisma, { ensureColumns } from './lib/prisma.js';
 import authRouter from './routes/auth.js';
 import productsRouter from './routes/products.js';
 import categoriesRouter from './routes/categories.js';
@@ -17,6 +17,9 @@ import bannersRouter from './routes/banners.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Auto-migración: crear columnas faltantes al iniciar
+ensureColumns().catch(err => console.error('[Startup] Error en ensureColumns:', err.message));
 
 // Middleware
 app.use(helmet());

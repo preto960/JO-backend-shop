@@ -362,7 +362,7 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
   }
 });
 
-// DELETE /products/:id - Eliminar producto (requiere permiso products.delete)
+// DELETE /products/:id - Eliminar producto (soft delete)
 router.delete('/:id', authenticate, requirePermission('products.delete'), async (req, res, next) => {
   try {
     const productId = parseInt(req.params.id);
@@ -390,7 +390,14 @@ router.delete('/:id', authenticate, requirePermission('products.delete'), async 
       }
     }
 
-    await prisma.product.delete({ where: { id: productId } });
+    await prisma.product.update({
+      where: { id: productId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+        active: false,
+      },
+    });
 
     res.json({ message: 'Producto eliminado correctamente' });
   } catch (err) {

@@ -15,9 +15,12 @@ model Role {
   active      Boolean   @default(true)
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  deletedBy   Int?      @map("deleted_by")
 
   users       UserRole[]
   permissions RolePermission[]
+  deletedByUser User?   @relation("RoleDeletedBy", fields: [deletedBy], references: [id])
 
   @@map("roles")
 }
@@ -98,6 +101,12 @@ model User {
   ownedStore  Store?     @relation("StoreOwner")
   stores      UserStore[]
   pushTokens  PushToken[]
+  deletedRoles       Role[]     @relation("RoleDeletedBy")
+  deletedCategories  Category[] @relation("CategoryDeletedBy")
+  deletedProducts    Product[]  @relation("ProductDeletedBy")
+  deletedStores      Store[]    @relation("StoreDeletedBy")
+  deletedAddresses   Address[]  @relation("AddressDeletedBy")
+  deletedBanners     Banner[]   @relation("BannerDeletedBy")
 
   @@index([email])
   @@index([active])
@@ -118,8 +127,11 @@ model Address {
   isDefault Boolean  @default(false) @map("is_default")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  deletedBy Int?      @map("deleted_by")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deletedByUser User? @relation("AddressDeletedBy", fields: [deletedBy], references: [id])
 
   @@index([userId])
   @@map("addresses")
@@ -138,9 +150,12 @@ model Store {
   active      Boolean   @default(true)
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  deletedBy   Int?      @map("deleted_by")
 
   ownerId     Int       @unique @map("owner_id")
   owner       User      @relation("StoreOwner", fields: [ownerId], references: [id])
+  deletedByUser User?   @relation("StoreDeletedBy", fields: [deletedBy], references: [id])
 
   users       UserStore[]
   products    ProductStore[]
@@ -159,8 +174,11 @@ model Category {
   image     String?   @db.VarChar(500)
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  deletedBy Int?      @map("deleted_by")
 
   products  Product[]
+  deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedBy], references: [id])
 
   @@map("categories")
 }
@@ -177,9 +195,12 @@ model Product {
   active      Boolean   @default(true)
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  deletedBy   Int?      @map("deleted_by")
 
   categoryId  Int       @map("category_id")
   category    Category  @relation(fields: [categoryId], references: [id])
+  deletedByUser User?   @relation("ProductDeletedBy", fields: [deletedBy], references: [id])
 
   stores      ProductStore[]
   orderItems  OrderItem[]
@@ -289,6 +310,10 @@ model Banner {
   active    Boolean   @default(true)
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+  deletedBy Int?      @map("deleted_by")
+
+  deletedByUser User? @relation("BannerDeletedBy", fields: [deletedBy], references: [id])
 
   @@index([active])
   @@index([sortOrder])

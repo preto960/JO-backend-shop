@@ -134,7 +134,7 @@ router.put('/:id', authenticate, requirePermission('categories.edit'), async (re
   }
 });
 
-// DELETE /categories/:id - Eliminar categoría (requiere permiso categories.delete)
+// DELETE /categories/:id - Eliminar categoría (soft delete)
 router.delete('/:id', authenticate, requirePermission('categories.delete'), async (req, res, next) => {
   try {
     const categoryId = parseInt(req.params.id);
@@ -154,7 +154,13 @@ router.delete('/:id', authenticate, requirePermission('categories.delete'), asyn
       });
     }
 
-    await prisma.category.delete({ where: { id: categoryId } });
+    await prisma.category.update({
+      where: { id: categoryId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+      },
+    });
 
     res.json({ message: 'Categoría eliminada correctamente' });
   } catch (err) {

@@ -163,7 +163,7 @@ router.put('/:id/default', authenticate, async (req, res, next) => {
   }
 });
 
-// DELETE /addresses/:id - Eliminar dirección
+// DELETE /addresses/:id - Eliminar dirección (soft delete)
 router.delete('/:id', authenticate, async (req, res, next) => {
   try {
     const addressId = parseInt(req.params.id);
@@ -179,7 +179,13 @@ router.delete('/:id', authenticate, async (req, res, next) => {
 
     const wasDefault = existing.isDefault;
 
-    await prisma.address.delete({ where: { id: addressId } });
+    await prisma.address.update({
+      where: { id: addressId },
+      data: {
+        deletedAt: new Date(),
+        deletedBy: req.user.id,
+      },
+    });
 
     // Si era la predeterminada, hacer predeterminada a la más reciente
     if (wasDefault) {

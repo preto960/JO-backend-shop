@@ -191,7 +191,7 @@ router.put('/:id', authenticate, upload.single('file'), async (req, res, next) =
   }
 });
 
-// DELETE /banners/:id - Eliminar banner (admin)
+// DELETE /banners/:id - Eliminar banner (soft delete, admin)
 router.delete('/:id', authenticate, async (req, res, next) => {
   try {
     if (!req.user || !req.user.roles.includes('admin')) {
@@ -204,10 +204,19 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       return res.status(404).json({ error: 'Banner no encontrado' });
     }
 
-    // Eliminar del Vercel Blob
-    try { await del(banner.imageUrl); } catch {}
+    // Soft delete: marcar como eliminado en vez de borrar
+    const now = new Date();
+    await prisma.banner.update({
+      where: { id: bannerId },
+      data: {
+        deletedAt: now,
+        deletedBy: req.user.id,
+        active: false,
+      },
+    });
 
-    await prisma.banner.delete({ where: { id: bannerId } });
+    // Eliminar del Vercel Blob (el archivo sí se borra del storage)
+    try { await del(banner.imageUrl); } catch {}
 
     res.json({ success: true, message: 'Banner eliminado' });
   } catch (err) {
