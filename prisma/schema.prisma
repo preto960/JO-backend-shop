@@ -277,6 +277,24 @@ model SystemConfig {
   @@map("system_config")
 }
 
+// ─── BANNERS DE PUBLICIDAD ────────────────────────────────────────────────
+
+model Banner {
+  id        Int       @id @default(autoincrement())
+  imageUrl  String    @db.VarChar(500) @map("image_url")
+  mediaType String    @default("image") @db.VarChar(20) @map("media_type") // image, video
+  link      String?   @db.VarChar(500)
+  duration  Int       @default(4) @map("duration") // segundos que se muestra cada banner
+  sortOrder Int       @default(0) @map("sort_order")
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([active])
+  @@index([sortOrder])
+  @@map("banners")
+}
+
 // ─── PUSH NOTIFICATION TOKENS ────────────────────────────────────────────
 
 model PushToken {

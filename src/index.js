@@ -13,6 +13,7 @@ import configRouter from './routes/config.js';
 import notificationsRouter from './routes/notifications.js';
 import verificationRouter from './routes/verification.js';
 import pushRoutes from './routes/push.js';
+import bannersRouter from './routes/banners.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,7 @@ app.use('/config', configRouter);
 app.use('/notifications', notificationsRouter);
 app.use('/auth/otp', verificationRouter);
 app.use('/api/push', pushRoutes);
+app.use('/banners', bannersRouter);
 
 // Health check
 app.get('/health', (req, res) => {
