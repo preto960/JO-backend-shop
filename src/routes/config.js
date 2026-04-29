@@ -154,6 +154,94 @@ router.delete('/upload-logo', authenticate, async (req, res, next) => {
   }
 });
 
+// POST /config/upload-banner - Subir banner a Vercel Blob (solo admin)
+router.post('/upload-banner', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envió ningún archivo' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN no configurado' });
+    }
+
+    // Sanitize filename
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `banners/${Date.now()}-${safeName}`;
+
+    // Upload to Vercel Blob
+    const blob = await put(blobName, req.file.buffer, {
+      access: 'public',
+      contentType: req.file.mimetype,
+      addRandomSuffix: false,
+    });
+
+    res.json({
+      success: true,
+      url: blob.url,
+      message: 'Banner subido correctamente',
+    });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el límite de 2MB' });
+      }
+    }
+    next(err);
+  }
+});
+
+// DELETE /config/upload-banner - Eliminar banner de Vercel Blob (solo admin)
+router.delete('/upload-banner', authenticate, async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'Se requiere la URL del banner a eliminar' });
+    }
+
+    // Remove the banner URL from banners_data in SystemConfig
+    const bannersConfig = await prisma.systemConfig.findUnique({
+      where: { key: 'banners_data' },
+    });
+
+    if (bannersConfig && bannersConfig.value) {
+      try {
+        let banners = JSON.parse(bannersConfig.value);
+        if (Array.isArray(banners)) {
+          banners = banners.filter(b => (b.image || b.url) !== url);
+          await prisma.systemConfig.update({
+            where: { key: 'banners_data' },
+            data: { value: JSON.stringify(banners) },
+          });
+        }
+      } catch {
+        // If banners_data is malformed, just ignore
+      }
+    }
+
+    // Optionally delete from Vercel Blob
+    try {
+      const { del } = await import('@vercel/blob');
+      await del(url);
+    } catch {
+      // Blob deletion may fail if URL format doesn't match, that's ok
+    }
+
+    res.json({ success: true, message: 'Banner eliminado correctamente' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Helper: upsert a SystemConfig entry
 async function upsertConfig(key, value) {
   const existing = await prisma.systemConfig.findUnique({ where: { key } });
