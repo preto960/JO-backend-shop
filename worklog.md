@@ -104,3 +104,30 @@ Stage Summary:
 - Backend: commit a978b0f pushed to JO-backend-shop
 - Frontend: commit 9205986 pushed to JO-frontend-shop
 - All changes deployed to GitHub
+---
+Task ID: 1
+Agent: main
+Task: Full width, descuentos en lotes, badge descuento ProductCard
+
+Work Log:
+- Analisis del estado actual: schema ya tenia discountPercent en Product, ProductBatch existia pero creaba productos nuevos
+- Schema: agregado ProductBatchItem (join table), campo createdBy a ProductBatch, relaciones actualizadas
+- ensureColumns: auto-migracion para product_batch_items y columna created_by
+- product-batches.js reescrito: ahora selecciona productos existentes y aplica descuento
+- PUT endpoint agregado para editar lotes (descuento, productos)
+- DELETE ahora resetea descuento a 0% en productos
+- ProductCard.tsx: badge % descuento en esquina superior derecha de imagen
+- ProductCard.tsx: precio original tachado + precio con descuento
+- Todas las paginas admin: maxWidth eliminado para full width
+- product-batches/page.tsx reescrito: modal con listado de productos existentes, checkboxes, busqueda
+- Bloque de ofertas solo visible si hay productos con descuento (ya estaba implementado)
+- Prisma client regenerado exitosamente
+- Frontend build exitoso sin errores
+- Push a ambos repos (JO-backend-shop y JO-frontend-shop)
+
+Stage Summary:
+- Backend: 3 archivos modificados (schema, prisma.js, product-batches.js)
+- Frontend: 10 archivos modificados (ProductCard, 8 paginas management)
+- Commits: backend 6ec88de, frontend bfd58ff
+- Todo pushed exitosamente a GitHub
+
