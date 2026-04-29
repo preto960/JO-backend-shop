@@ -242,5 +242,6 @@ export async function ensureColumns() {
   } catch (err) {
     console.error('[DB] Error migrando permisos batches:', err.message);
   }
+}
 
 export default prisma;
