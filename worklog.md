@@ -1,0 +1,84 @@
+# JO-Shop Worklog
+
+---
+Task ID: 1
+Agent: main
+Task: FIX CRÍTICO - App móvil: Agregar import faltante de useConfig en NotificationHandler
+
+Work Log:
+- Clonado repo mobile desde GitHub
+- Verificado App.js: el commit 6ceead4 ya usaba useConfig() en NotificationHandler pero el import solo tenía {ConfigProvider}
+- El working tree ya tenía el fix (import {ConfigProvider, useConfig}) como modificación local
+- Confirmado que ConfigContext.js exporta useConfig correctamente en la ruta @context/ConfigContext
+- Commit cb06079 creado y pusheado a main
+
+Stage Summary:
+- Fix aplicado: import {ConfigProvider, useConfig} from '@context/ConfigContext'
+- Push exitoso a origin/main
+
+---
+Task ID: 2
+Agent: main
+Task: Verificar error primary ReferenceError en 23 archivos con useThemeColors
+
+Work Log:
+- Buscados todos los archivos que usan useThemeColors (23 archivos + 1 definición del hook)
+- Script Python verificó el orden de hooks en cada archivo
+- Resultado: useThemeColors() se llama ANTES de useMemo en los 23 archivos
+
+Stage Summary:
+- No se encontraron problemas de orden
+- Todos los archivos están correctos
+
+---
+Task ID: 3
+Agent: main
+Task: Push cambios mobile a main
+
+Work Log:
+- Commit 6ceead4 ya estaba pushed a origin/main
+- Commit cb06079 (fix useConfig import) creado y pusheado
+- Verificado con git log y fetch
+
+Stage Summary:
+- Push exitoso: 6ceead4..cb06079 main -> main
+
+---
+Task ID: 4
+Agent: main
+Task: Logo dinámico en frontend
+
+Work Log:
+- Descubierto que el repo es Vue 3 + Vite + Pinia + Tailwind (no Next.js como se mencionó)
+- Logo dinámico ya estaba implementado en Sidebar.vue y Login.vue (usando settingsStore.siteLogo/siteName)
+- Agregado: title dinámico del documento via composable useDynamicTheme
+- Agregado: favicon dinámico si hay logo URL configurado
+- Fix: URL hardcoded en Settings.vue:588 (logo upload) → usa apiBaseURL dinámico
+
+Stage Summary:
+- Sidebar y Login ya tenían logo dinámico
+- Title y favicon ahora son dinámicos
+- Bug de URL hardcoded corregido
+
+---
+Task ID: 5
+Agent: main
+Task: Colores dinámicos en frontend
+
+Work Log:
+- No existe #FF6B35 en el frontend (los colores son purple #a855f7 y pink #ec4899)
+- 71 instancias de primary-/accent- en 13 archivos usando Tailwind
+- Creado src/utils/colorUtils.ts: genera paleta 50-900 desde hex, genera accent con hue shift
+- Creado src/composables/useDynamicTheme.ts: watcher que aplica CSS custom properties en :root
+- Actualizado settings store: campo primaryColor en general settings
+- Actualizado tailwind.config.js: primary/accent usan var(--color-primary-500) con fallbacks
+- Actualizado styles.css: CSS variables por defecto para paleta
+- Actualizado Settings.vue: campo Primary Color con color picker + input hex
+- Actualizado App.vue: aplica tema dinámico al montar
+
+Stage Summary:
+- Sistema completo de colores dinámicos implementado
+- Palette generation desde un solo hex color
+- Accent derivado automáticamente (hue shift de 30°)
+- 71 instancias de primary-/accent- ahora son dinámicas sin cambios en componentes
+- Commit 79001db pusheado a main
