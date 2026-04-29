@@ -197,7 +197,50 @@ export async function ensureColumns() {
     console.error('[DB] Error en auto-migration product_batch_items:', err.message);
   }
 
+  // ─── Migrar permisos product_batches.* → batches.* ──────────────────────
+  try {
+    // 1. Renombrar permisos duplicados product_batches.* → batches.*
+    await prisma.$executeRawUnsafe(`
+      UPDATE permissions SET code = 'batches.view', name = 'Ver lotes', module = 'batches', description = 'Ver lotes de productos'
+        WHERE code = 'product_batches.view';
+      UPDATE permissions SET code = 'batches.create', name = 'Crear lotes', module = 'batches', description = 'Crear lotes de productos'
+        WHERE code = 'product_batches.create';
+      UPDATE permissions SET code = 'batches.edit', name = 'Editar lotes', module = 'batches', description = 'Editar lotes de productos'
+        WHERE code = 'product_batches.edit';
+      UPDATE permissions SET code = 'batches.delete', name = 'Eliminar lotes', module = 'batches', description = 'Eliminar lotes de productos'
+        WHERE code = 'product_batches.delete';
+    `);
 
-}
+    // 2. Asegurar que batches.view_menu existe (el seed lo crea, pero por si acaso)
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO permissions (name, code, module, description, "created_at") VALUES
+        ('Ver menú Lotes', 'batches.view_menu', 'batches', 'Permite ver el módulo de lotes en el menú', NOW()),
+        ('Ver lotes', 'batches.view', 'batches', 'Ver lotes de productos', NOW()),
+        ('Leer lotes', 'batches.read', 'batches', 'Ver la lista y detalle de lotes', NOW()),
+        ('Crear lotes', 'batches.create', 'batches', 'Crear nuevos lotes de descuento', NOW()),
+        ('Editar lotes', 'batches.edit', 'batches', 'Editar lotes existentes', NOW()),
+        ('Eliminar lotes', 'batches.delete', 'batches', 'Eliminar lotes', NOW())
+      ON CONFLICT (code) DO NOTHING;
+    `);
+
+    // 3. Asignar permisos batches.* a todos los roles admin y editor que no los tengan
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO role_permissions (role_id, permission_id, "created_at")
+      SELECT r.id, p.id, NOW()
+      FROM roles r
+      CROSS JOIN permissions p
+      WHERE p.code LIKE 'batches.%'
+        AND r.name IN ('admin', 'editor')
+        AND NOT EXISTS (
+          SELECT 1 FROM role_permissions rp
+          WHERE rp.role_id = r.id AND rp.permission_id = p.id
+        )
+      ON CONFLICT DO NOTHING;
+    `);
+
+    console.log('[DB] Permisos batches.* migrados y asignados a admin/editor.');
+  } catch (err) {
+    console.error('[DB] Error migrando permisos batches:', err.message);
+  }
 
 export default prisma;
