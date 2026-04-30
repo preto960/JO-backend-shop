@@ -155,3 +155,22 @@ Stage Summary:
 - Archivo modificado: src/app/product/[id]/page.tsx (569 insertions, 240 deletions)
 - Commit: d20ffd6 - "feat: rediseñar vista de detalle de producto con estilo premium"
 - Push exitoso a GitHub (preto960/JO-frontend-shop)
+
+---
+Task ID: 1
+Agent: main
+Task: Fix favorite button styling and add favorites access
+
+Work Log:
+- Fixed favorite button in product detail page: removed red background/border from button, only the heart icon now turns red (#E74C3C) when favorited
+- The button maintains neutral style (var(--input-bg) background, var(--border) border) regardless of favorite state
+- Added favorites button (Heart icon) in the main page header, next to the cart button
+- Added favCount state with localStorage listener for 'joshop_favorites' and 'favoritesUpdated' event
+- Favorites page already existed at /favorites and was already in the SidebarMenu for customer role
+- Committed and pushed to GitHub (ae4b194)
+
+Stage Summary:
+- Product detail favorite button: only heart icon fills red, button stays neutral
+- Main page header: new Heart button with badge showing favorites count, links to /favorites
+- Customer sidebar menu: already had Favoritos link with Heart icon
+- Access to favorites: via header heart button (all users) or sidebar menu (logged-in customers)
