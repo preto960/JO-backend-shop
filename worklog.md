@@ -174,3 +174,27 @@ Stage Summary:
 - Main page header: new Heart button with badge showing favorites count, links to /favorites
 - Customer sidebar menu: already had Favoritos link with Heart icon
 - Access to favorites: via header heart button (all users) or sidebar menu (logged-in customers)
+
+---
+Task ID: 2
+Agent: main + subagents
+Task: Refactor settings page to card-based navigation dashboard
+
+Work Log:
+- Analyzed current settings page (935 lines) with inline sections: Apariencia, Modo de Tienda, Banners, Servidor Backend, Acerca de
+- Created new card-based settings dashboard at /settings/page.tsx (498 lines)
+- Extracted Appearance section to /settings/appearance/page.tsx (277 lines)
+- Extracted Banners section to /settings/banners/page.tsx (820 lines)
+- Navigation cards: Apariencia, Roles, Usuarios, Categorias, Lotes, Tiendas, Banners
+- Multi-store toggle kept as inline card on dashboard
+- "Acerca de" info section at bottom of dashboard
+- Cards visible based on role (admin/editor) and permissions
+- Responsive grid: 1 col mobile, 2 cols desktop (768px breakpoint)
+- Fixed TypeScript build error in banners page (string/boolean comparison)
+- Build passed, committed and pushed (fd34237)
+
+Stage Summary:
+- Settings is now a card navigation dashboard with 7 cards + 1 toggle card + info section
+- /settings/appearance - Full appearance config (name, colors, logo)
+- /settings/banners - Full banner management (CRUD, toggle, inline edit, upload modal)
+- Existing routes unchanged: /manage-roles, /manage-users, /manage-categories, /manage-stores, /product-batches
