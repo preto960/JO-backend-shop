@@ -240,8 +240,8 @@ export async function ensureColumns() {
 
     // 3. Asignar permisos batches.* a todos los roles admin y editor que no los tengan
     await prisma.$executeRawUnsafe(`
-      INSERT INTO role_permissions (role_id, permission_id, "created_at")
-      SELECT r.id, p.id, NOW()
+      INSERT INTO role_permissions (role_id, permission_id)
+      SELECT r.id, p.id
       FROM roles r
       CROSS JOIN permissions p
       WHERE p.code LIKE 'batches.%'
