@@ -21,10 +21,14 @@ const upload = multer({
 
 const router = express.Router();
 
-// GET /categories - Listar categorías (público)
+// GET /categories - Listar categorías (público, solo activas por defecto)
 router.get('/', async (req, res, next) => {
   try {
+    const { all } = req.query;
+    const where = all === 'true' ? {} : { active: true };
+
     const categories = await prisma.category.findMany({
+      where,
       orderBy: { name: 'asc' },
       include: {
         _count: {
@@ -144,7 +148,7 @@ router.put('/:id', authenticate, requirePermission('categories.edit'), async (re
       return res.status(404).json({ error: 'Categoría no encontrada' });
     }
 
-    const { name, image } = req.body;
+    const { name, image, active } = req.body;
     const updateData = {};
 
     if (name !== undefined) {
@@ -163,6 +167,7 @@ router.put('/:id', authenticate, requirePermission('categories.edit'), async (re
     }
 
     if (image !== undefined) updateData.image = image || null;
+    if (active !== undefined) updateData.active = Boolean(active);
 
     const updated = await prisma.category.update({
       where: { id: categoryId },

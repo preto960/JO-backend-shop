@@ -174,6 +174,7 @@ model Category {
   name      String    @unique @db.VarChar(100)
   slug      String    @unique @db.VarChar(120)
   image     String?   @db.VarChar(500)
+  active    Boolean   @default(true)
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -182,6 +183,7 @@ model Category {
   products  Product[]
   deletedByUser User? @relation("CategoryDeletedBy", fields: [deletedBy], references: [id])
 
+  @@index([active])
   @@map("categories")
 }
 
