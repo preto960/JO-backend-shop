@@ -198,3 +198,26 @@ Stage Summary:
 - /settings/appearance - Full appearance config (name, colors, logo)
 - /settings/banners - Full banner management (CRUD, toggle, inline edit, upload modal)
 - Existing routes unchanged: /manage-roles, /manage-users, /manage-categories, /manage-stores, /product-batches
+
+---
+Task ID: 1
+Agent: Main Agent
+Task: Remove icon/subtitle from banners, redesign categories with active toggle, bigger landing cards
+
+Work Log:
+- Removed icon (orange gradient square) and subtitle from Banners de Publicidad page header, keeping only the title
+- Added `active Boolean @default(true)` field to Category model in Prisma schema with @@index
+- Updated GET /categories API to filter by active:true by default, added ?all=true query param for admin
+- Updated PUT /categories/:id API to support toggling active field
+- Redesigned manage-categories page: category images now 64x64 (up from 46x46), displayed with border instead of gray background, with proper gap from text
+- Added Power/PowerOff toggle button for activate/deactivate categories in admin list
+- Inactive categories shown with reduced opacity (0.6) and "Inactiva" badge
+- Admin fetches all categories via ?all=true, landing page only shows active ones
+- Made landing page category cards bigger: 110px wide (up from 90px), 62x62 images (up from 48x48), larger border-radius (18), more padding
+- Centered categories on landing with justifyContent: 'center'
+- Pushed both repos to GitHub (backend cf84ab4, frontend 9168570)
+
+Stage Summary:
+- Backend: Category model now has `active` field, API supports filtering and toggling
+- Frontend: Banners header cleaned, categories redesigned with bigger images and active toggle, landing cards bigger and centered
+- All changes committed and pushed successfully
