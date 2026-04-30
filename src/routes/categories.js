@@ -1,7 +1,23 @@
 import express from 'express';
+import multer from 'multer';
+import { put } from '@vercel/blob';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission } from '../middleware/auth.js';
 import { sanitize } from '../services/auth.js';
+
+// Multer config for category image upload (in-memory)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
+    if (allowed.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato no permitido. Usa JPG, PNG, WebP, SVG o GIF'));
+    }
+  },
+});
 
 const router = express.Router();
 
@@ -19,6 +35,34 @@ router.get('/', async (req, res, next) => {
 
     res.json(categories);
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /categories/upload-image - Subir imagen de categoría a Vercel Blob
+router.post('/upload-image', authenticate, requirePermission('categories.edit'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se recibió ningún archivo' });
+    }
+
+    const ext = req.file.originalname.split('.').pop() || 'jpg';
+    const filename = `category-${Date.now()}.${ext}`;
+
+    const blob = await put(filename, req.file.buffer, {
+      access: 'public',
+      addRandomSuffix: true,
+      contentType: req.file.mimetype,
+    });
+
+    res.json({ url: blob.url });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el límite de 2MB' });
+      }
+      return res.status(400).json({ error: err.message });
+    }
     next(err);
   }
 });
