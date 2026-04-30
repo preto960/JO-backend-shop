@@ -19,7 +19,9 @@ import productBatchesRouter from './routes/product-batches.js';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Auto-migración: crear columnas faltantes al iniciar
+// ─── STARTUP: esperar migración antes de aceptar requests ──────────
+await ensureColumns();
+console.log('[Startup] Auto-migración completada.');
 ensureColumns().catch(err => console.error('[Startup] Error en ensureColumns:', err.message));
 
 // Middleware
