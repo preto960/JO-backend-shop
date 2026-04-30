@@ -113,6 +113,21 @@ export async function ensureColumns() {
     }
   }
 
+  // Columna images (JSON) en products
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'products' AND column_name = 'images';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando columna products.images...');
+      await prisma.$executeRawUnsafe(`ALTER TABLE products ADD COLUMN images TEXT DEFAULT NULL;`);
+      console.log('[DB] Columna products.images creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration products.images:', err.message);
+  }
+
   // Columna discount_percent en products
   try {
     const result = await prisma.$queryRawUnsafe(`

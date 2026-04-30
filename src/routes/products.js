@@ -1,7 +1,29 @@
 import express from 'express';
+import multer from 'multer';
+import { put, del } from '@vercel/blob';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission, optionalAuth } from '../middleware/auth.js';
 import { sanitize } from '../services/auth.js';
+
+// Multer config for product image upload (in-memory)
+const ALLOWED_IMG_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (_req, file, cb) => {
+    if (ALLOWED_IMG_TYPES.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Tipo de archivo no permitido. Solo se aceptan JPG, PNG, WebP y GIF.'));
+    }
+  },
+});
 
 const router = express.Router();
 
@@ -174,7 +196,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /products - Crear producto (requiere permiso products.create)
 router.post('/', authenticate, requirePermission('products.create'), async (req, res, next) => {
   try {
-    const { name, description, price, discountPercent, image, thumbnail, stock, categoryId, storeIds, active } = req.body;
+    const { name, description, price, discountPercent, image, thumbnail, images, stock, categoryId, storeIds, active } = req.body;
 
     if (!name || name.trim().length < 2) {
       return res.status(400).json({ error: 'Nombre del producto requerido (mínimo 2 caracteres)', field: 'name' });
@@ -230,6 +252,7 @@ router.post('/', authenticate, requirePermission('products.create'), async (req,
         discountPercent: discountPercent !== undefined ? parseFloat(discountPercent) : 0,
         image: image || null,
         thumbnail: thumbnail || null,
+        images: images && Array.isArray(images) ? JSON.stringify(images) : null,
         stock: parseInt(stock) || 0,
         active: active !== undefined ? Boolean(active) : true,
         categoryId: parseInt(categoryId),
@@ -284,7 +307,7 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
       }
     }
 
-    const { name, description, price, discountPercent, image, thumbnail, stock, categoryId, active, storeIds } = req.body;
+    const { name, description, price, discountPercent, image, thumbnail, images, stock, categoryId, active, storeIds } = req.body;
     const updateData = {};
 
     if (name !== undefined) {
@@ -317,6 +340,7 @@ router.put('/:id', authenticate, requirePermission('products.edit'), async (req,
 
     if (image !== undefined) updateData.image = image || null;
     if (thumbnail !== undefined) updateData.thumbnail = thumbnail || null;
+    if (images !== undefined) updateData.images = (Array.isArray(images) && images.length > 0) ? JSON.stringify(images) : null;
     if (stock !== undefined) updateData.stock = parseInt(stock);
     if (active !== undefined) updateData.active = Boolean(active);
 
@@ -409,6 +433,99 @@ router.delete('/:id', authenticate, requirePermission('products.delete'), async 
     });
 
     res.json({ message: 'Producto eliminado correctamente' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /products/upload-image - Subir imagen de producto (multipart)
+router.post('/upload-image', authenticate, requirePermission('products.create'), upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envio ningun archivo' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'Configuracion de almacenamiento no disponible' });
+    }
+
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `products/${Date.now()}-${safeName}`;
+
+    const blob = await put(blobName, req.file.buffer, {
+      access: 'public',
+      contentType: req.file.mimetype,
+      addRandomSuffix: false,
+    });
+
+    res.status(201).json({ url: blob.url });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el limite de 5MB' });
+      }
+    }
+    next(err);
+  }
+});
+
+// POST /products/upload-images - Subir multiples imagenes de producto (multipart)
+router.post('/upload-images', authenticate, requirePermission('products.create'), upload.array('files', 10), async (req, res, next) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No se enviaron archivos' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'Configuracion de almacenamiento no disponible' });
+    }
+
+    const urls = [];
+    for (const file of req.files) {
+      const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blobName = `products/${Date.now()}-${safeName}`;
+      const blob = await put(blobName, file.buffer, {
+        access: 'public',
+        contentType: file.mimetype,
+        addRandomSuffix: false,
+      });
+      urls.push(blob.url);
+    }
+
+    res.status(201).json({ urls });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Uno o mas archivos exceden el limite de 5MB' });
+      }
+      if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ error: 'Maximo 10 imagenes por envio' });
+      }
+    }
+    next(err);
+  }
+});
+
+// DELETE /products/delete-image - Eliminar imagen de Vercel Blob
+router.delete('/delete-image', authenticate, requirePermission('products.edit'), async (req, res, next) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'URL de imagen requerida' });
+    }
+
+    // Solo eliminar si es una URL de Vercel Blob (productos/)
+    if (url.includes('/products/')) {
+      try {
+        await del(url);
+      } catch {
+        // Si no existe, no es error
+      }
+    }
+
+    res.json({ message: 'Imagen eliminada' });
   } catch (err) {
     next(err);
   }
