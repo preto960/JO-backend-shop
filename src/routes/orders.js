@@ -168,7 +168,7 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
       JOIN "orders" o ON o.id = "order_items"."order_id"
       WHERE o."created_at" >= ${startDate} AND o."created_at" <= ${endDate}
       GROUP BY "product_name"
-      ORDER BY "totalQty" DESC
+      ORDER BY SUM("quantity")::int DESC
       LIMIT 10
     `;
 
