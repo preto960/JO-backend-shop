@@ -1,7 +1,7 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission, hasPermission } from '../middleware/auth.js';
-import { sanitize, hashPassword, isValidEmail } from '../services/auth.js';
+import { sanitize, hashPassword, isValidEmail, validatePassword } from '../services/auth.js';
 
 const router = express.Router();
 
@@ -341,7 +341,7 @@ router.post('/users/:id/permissions', authenticate, requirePermission('users.edi
 router.put('/users/:id', authenticate, requirePermission('users.edit'), async (req, res, next) => {
   try {
     const userId = parseInt(req.params.id);
-    const { name, phone, birthdate, active, storeIds } = req.body;
+    const { name, phone, birthdate, active, storeIds, password } = req.body;
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) {
@@ -368,6 +368,14 @@ router.put('/users/:id', authenticate, requirePermission('users.edit'), async (r
 
     if (active !== undefined) {
       updateData.active = Boolean(active);
+    }
+
+    if (password !== undefined && password !== '') {
+      const passwordValidation = validatePassword(password);
+      if (!passwordValidation.valid) {
+        return res.status(400).json({ error: passwordValidation.message, field: 'password' });
+      }
+      updateData.password = await hashPassword(password);
     }
 
     // Actualizar tiendas asignadas (muchos a muchos)
