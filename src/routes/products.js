@@ -33,6 +33,16 @@ router.get('/', optionalAuth, async (req, res, next) => {
     const { page = 1, limit = 20, category, store, sort = 'newest', active } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
+    // Get system config for multi-store filtering
+    const systemConfig = await prisma.config.findMany({
+      where: { key: { in: ['multi_store'] } },
+      select: { key: true, value: true },
+    });
+    const config = {};
+    for (const c of systemConfig) {
+      config[c.key] = c.value;
+    }
+
     const where = {};
     if (req.user && req.user.roles.includes('admin')) {
       if (active !== undefined) {
@@ -62,6 +72,19 @@ router.get('/', optionalAuth, async (req, res, next) => {
       if (userStores.length > 0) {
         where.stores = {
           some: { storeId: { in: userStores.map(s => s.storeId) } },
+        };
+      }
+    }
+
+    // Multi-store: only show products with assigned stores
+    if (config.multi_store === 'true') {
+      where.stores = {
+        some: {},  // has at least one store
+      };
+      // If a specific store was already requested, merge with that filter
+      if (store) {
+        where.stores = {
+          some: { storeId: parseInt(store) },
         };
       }
     }
@@ -110,6 +133,16 @@ router.get('/search', optionalAuth, async (req, res, next) => {
   try {
     const { q, category, store, page = 1, limit = 20 } = req.query;
 
+    // Get system config for multi-store filtering
+    const systemConfig = await prisma.config.findMany({
+      where: { key: { in: ['multi_store'] } },
+      select: { key: true, value: true },
+    });
+    const config = {};
+    for (const c of systemConfig) {
+      config[c.key] = c.value;
+    }
+
     if (!q || q.trim().length === 0) {
       return res.status(400).json({ error: 'Parámetro de búsqueda "q" es requerido' });
     }
@@ -130,6 +163,18 @@ router.get('/search', optionalAuth, async (req, res, next) => {
       where.stores = {
         some: { storeId: parseInt(store) },
       };
+    }
+
+    // Multi-store: only show products with assigned stores
+    if (config.multi_store === 'true') {
+      where.stores = {
+        some: {},  // has at least one store
+      };
+      if (store) {
+        where.stores = {
+          some: { storeId: parseInt(store) },
+        };
+      }
     }
 
     const skip = (parseInt(page) - 1) * parseInt(limit);
