@@ -181,9 +181,17 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
   try {
     const { customer, items, total, totalItems, addressId } = req.body;
 
-    if (!customer || !customer.name || !customer.phone) {
+    // Auto-fill customer data from user profile if not provided
+    const finalCustomer = {
+      name: customer?.name?.trim() || req.user.name || '',
+      phone: customer?.phone?.trim() || req.user.phone || '',
+      address: customer?.address?.trim() || null,
+      notes: customer?.notes?.trim() || null,
+    };
+
+    if (!finalCustomer.name || !finalCustomer.phone) {
       return res.status(400).json({
-        error: 'Datos del cliente son requeridos (nombre y teléfono)',
+        error: 'Datos del cliente son requeridos (nombre y teléfono). Completa tu perfil.',
       });
     }
 
@@ -194,46 +202,73 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
     }
 
     // Si se proporciona un addressId, verificar que pertenece al usuario
-    let addressData = null;
     if (addressId) {
       const address = await prisma.address.findUnique({
         where: { id: parseInt(addressId) },
       });
       if (address && address.userId === req.user.id) {
-        addressData = address.address;
-        if (!customer.address && addressData) {
-          customer.address = addressData;
+        if (!finalCustomer.address) {
+          finalCustomer.address = address.address;
         }
       }
     }
 
+    // Fetch product prices from DB to ensure accuracy
+    const productIds = items.filter(i => i.id || i.productId).map(i => parseInt(i.id || i.productId)).filter(Boolean);
+    const productMap = {};
+    if (productIds.length > 0) {
+      const products = await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, price: true, name: true },
+      });
+      for (const p of products) {
+        productMap[p.id] = p;
+      }
+    }
+
     const order = await prisma.$transaction(async (tx) => {
+      // Calculate total from items if not provided
+      const calculatedTotal = items.reduce((sum, item) => {
+        const price = parseFloat(item.price) || productMap[parseInt(item.id || item.productId)]?.price || 0;
+        const qty = parseInt(item.quantity) || 1;
+        return sum + (price * qty);
+      }, 0);
+      const calculatedTotalItems = items.reduce((sum, item) => sum + (parseInt(item.quantity) || 1), 0);
+
       const newOrder = await tx.order.create({
         data: {
-          customerName: customer.name,
-          customerPhone: customer.phone,
-          customerAddr: customer.address || null,
-          total: parseFloat(total) || 0,
-          totalItems: parseInt(totalItems) || 0,
+          customerName: finalCustomer.name,
+          customerPhone: finalCustomer.phone,
+          customerAddr: finalCustomer.address,
+          total: parseFloat(total) || calculatedTotal,
+          totalItems: parseInt(totalItems) || calculatedTotalItems,
           status: 'pending',
           userId: req.user.id,
           items: {
-            create: items.map((item) => ({
-              productName: item.name,
-              productPrice: parseFloat(item.price) || 0,
-              quantity: parseInt(item.quantity) || 1,
-              subtotal: (parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1),
-              productId: item.id || null,
-            })),
+            create: items.map((item) => {
+              const pid = parseInt(item.id || item.productId) || null;
+              const dbProduct = pid ? productMap[pid] : null;
+              const itemPrice = parseFloat(item.price) || dbProduct?.price || 0;
+              const itemName = item.name || dbProduct?.name || 'Producto';
+              const qty = parseInt(item.quantity) || 1;
+              return {
+                productName: itemName,
+                productPrice: itemPrice,
+                quantity: qty,
+                subtotal: itemPrice * qty,
+                productId: pid,
+              };
+            }),
           },
         },
         include: { items: true },
       });
 
       for (const item of items) {
-        if (item.id) {
+        const pid = parseInt(item.id || item.productId);
+        if (pid) {
           await tx.product.update({
-            where: { id: parseInt(item.id) },
+            where: { id: pid },
             data: { stock: { decrement: parseInt(item.quantity) || 1 } },
           });
         }
