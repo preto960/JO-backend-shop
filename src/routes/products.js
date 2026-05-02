@@ -40,7 +40,7 @@ router.get('/', optionalAuth, async (req, res, next) => {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // Get system config for multi-store filtering
-    const systemConfig = await prisma.config.findMany({
+    const systemConfig = await prisma.systemConfig.findMany({
       where: { key: { in: ['multi_store'] } },
       select: { key: true, value: true },
     });
@@ -140,7 +140,7 @@ router.get('/search', optionalAuth, async (req, res, next) => {
     const { q, category, store, page = 1, limit = 20 } = req.query;
 
     // Get system config for multi-store filtering
-    const systemConfig = await prisma.config.findMany({
+    const systemConfig = await prisma.systemConfig.findMany({
       where: { key: { in: ['multi_store'] } },
       select: { key: true, value: true },
     });
