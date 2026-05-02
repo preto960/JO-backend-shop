@@ -1,9 +1,25 @@
 import express from 'express';
+import multer from 'multer';
+import { put } from '@vercel/blob';
 import prisma from '../lib/prisma.js';
 import { authenticate, requirePermission, optionalAuth } from '../middleware/auth.js';
 import { sanitize } from '../services/auth.js';
 
 const router = express.Router();
+
+// Multer config for store logo upload (in-memory)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB
+  fileFilter: (_req, file, cb) => {
+    const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
+    if (allowed.has(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Formato no permitido. Usa JPG, PNG, WebP, SVG o GIF'));
+    }
+  },
+});
 
 // GET /stores - Listar tiendas (público con auth opcional)
 router.get('/', optionalAuth, async (req, res, next) => {
@@ -66,6 +82,48 @@ router.get('/my-store', authenticate, async (req, res, next) => {
     }
 
     res.json(store);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /stores/upload-logo - Subir logo de tienda a Vercel Blob
+router.post('/upload-logo', authenticate, async (req, res, next) => {
+  try {
+    const isAdmin = req.user.roles.includes('admin');
+    const hasPerm = req.user.permissions.includes('stores.create') || req.user.permissions.includes('stores.edit');
+    const isEditor = req.user.roles.includes('editor');
+
+    if (!isAdmin && !hasPerm && !isEditor) {
+      return res.status(403).json({ error: 'No tienes permisos para subir logos de tienda' });
+    }
+
+    upload.single('file')(req, res, async (err) => {
+      if (err) {
+        if (err instanceof multer.MulterError) {
+          if (err.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ error: 'La imagen no debe superar 2MB' });
+          }
+          return res.status(400).json({ error: err.message });
+        }
+        return next(err);
+      }
+
+      if (!req.file) {
+        return res.status(400).json({ error: 'No se recibió ningún archivo' });
+      }
+
+      const ext = req.file.originalname.split('.').pop() || 'jpg';
+      const filename = `store-${Date.now()}.${ext}`;
+
+      const blob = await put(filename, req.file.buffer, {
+        access: 'public',
+        addRandomSuffix: true,
+        contentType: req.file.mimetype,
+      });
+
+      res.json({ url: blob.url });
+    });
   } catch (err) {
     next(err);
   }
