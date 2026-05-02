@@ -130,9 +130,13 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
       createdAt: { gte: startDate, lte: endDate },
     };
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
     const [
       totalOrders,
       totalRevenue,
+      todayOrders,
       pendingOrders,
       preparingOrders,
       shippedOrders,
@@ -143,6 +147,7 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
     ] = await Promise.all([
       prisma.order.count({ where: { ...dateFilter, status: { not: 'cancelled' } } }),
       prisma.order.aggregate({ where: { ...dateFilter, status: { not: 'cancelled' } }, _sum: { total: true } }),
+      prisma.order.count({ where: { createdAt: { gte: todayStart } } }),
       prisma.order.count({ where: { ...dateFilter, status: 'pending' } }),
       prisma.order.count({ where: { ...dateFilter, status: 'preparing' } }),
       prisma.order.count({ where: { ...dateFilter, status: 'shipped' } }),
@@ -192,6 +197,7 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
       summary: {
         totalOrders,
         totalRevenue: totalRevenue._sum.total || 0,
+        todayOrders,
         pendingOrders,
         preparingOrders,
         shippedOrders,
