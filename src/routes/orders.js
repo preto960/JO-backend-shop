@@ -154,20 +154,20 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
 
     // Orders by day (for chart)
     const ordersByDay = await prisma.$queryRaw`
-      SELECT DATE("createdAt") as date, COUNT(*)::int as count, COALESCE(SUM("total"), 0) as revenue
-      FROM "Order"
-      WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
-      GROUP BY DATE("createdAt")
+      SELECT DATE("created_at") as date, COUNT(*)::int as count, COALESCE(SUM("total"), 0) as revenue
+      FROM "orders"
+      WHERE "created_at" >= ${startDate} AND "created_at" <= ${endDate}
+      GROUP BY DATE("created_at")
       ORDER BY date ASC
     `;
 
     // Top products (by quantity sold)
     const topProducts = await prisma.$queryRaw`
-      SELECT "productName", SUM("quantity")::int as totalQty, SUM("subtotal") as totalRevenue
-      FROM "OrderItem"
-      JOIN "Order" o ON o.id = "OrderItem"."orderId"
-      WHERE o."createdAt" >= ${startDate} AND o."createdAt" <= ${endDate}
-      GROUP BY "productName"
+      SELECT "product_name", SUM("quantity")::int as totalQty, SUM("subtotal") as totalRevenue
+      FROM "order_items"
+      JOIN "orders" o ON o.id = "order_items"."order_id"
+      WHERE o."created_at" >= ${startDate} AND o."created_at" <= ${endDate}
+      GROUP BY "product_name"
       ORDER BY "totalQty" DESC
       LIMIT 10
     `;
@@ -175,8 +175,8 @@ router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view')
     // Revenue by status
     const revenueByStatus = await prisma.$queryRaw`
       SELECT status, COUNT(*)::int as count, COALESCE(SUM("total"), 0) as revenue
-      FROM "Order"
-      WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+      FROM "orders"
+      WHERE "created_at" >= ${startDate} AND "created_at" <= ${endDate}
       GROUP BY status
       ORDER BY count DESC
     `;
