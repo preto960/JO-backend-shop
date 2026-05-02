@@ -57,6 +57,7 @@ router.get('/all', authenticate, async (req, res, next) => {
     }
     const banners = await prisma.banner.findMany({
       orderBy: { sortOrder: 'asc' },
+      includeDeleted: true,
     });
     res.json(banners);
   } catch (err) {
