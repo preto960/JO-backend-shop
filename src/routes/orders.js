@@ -87,55 +87,136 @@ router.get('/available', authenticate, requirePermission('delivery.accept'), asy
   }
 });
 
-// GET /orders/stats/dashboard - Estadísticas (requiere permiso dashboard.view)
+// GET /orders/stats/dashboard - Estadísticas con filtros de fecha
 router.get('/stats/dashboard', authenticate, requirePermission('dashboard.view'), async (req, res, next) => {
   try {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const { from, to, period } = req.query;
+
+    // Calculate date range
+    let startDate = new Date();
+    let endDate = new Date();
+
+    if (period) {
+      const now = new Date();
+      switch (period) {
+        case 'today':
+          startDate.setHours(0, 0, 0, 0);
+          endDate.setHours(23, 59, 59, 999);
+          break;
+        case 'week':
+          startDate.setDate(startDate.getDate() - 7);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'month':
+          startDate.setMonth(startDate.getMonth() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+        case 'year':
+          startDate.setFullYear(startDate.getFullYear() - 1);
+          startDate.setHours(0, 0, 0, 0);
+          break;
+      }
+    } else if (from && to) {
+      startDate = new Date(from);
+      endDate = new Date(to);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      // Default: last 30 days
+      startDate.setDate(startDate.getDate() - 30);
+      startDate.setHours(0, 0, 0, 0);
+    }
+
+    const dateFilter = {
+      createdAt: { gte: startDate, lte: endDate },
+    };
 
     const [
       totalOrders,
       totalRevenue,
-      todayOrders,
-      todayRevenue,
       pendingOrders,
+      preparingOrders,
+      shippedOrders,
+      deliveredOrders,
+      cancelledOrders,
       totalProducts,
       totalCustomers,
     ] = await Promise.all([
-      prisma.order.count({ where: { status: { not: 'cancelled' } } }),
-      prisma.order.aggregate({
-        where: { status: { not: 'cancelled' } },
-        _sum: { total: true },
-      }),
-      prisma.order.count({ where: { createdAt: { gte: today }, status: { not: 'cancelled' } } }),
-      prisma.order.aggregate({
-        where: { createdAt: { gte: today }, status: { not: 'cancelled' } },
-        _sum: { total: true },
-      }),
-      prisma.order.count({ where: { status: 'pending' } }),
+      prisma.order.count({ where: { ...dateFilter, status: { not: 'cancelled' } } }),
+      prisma.order.aggregate({ where: { ...dateFilter, status: { not: 'cancelled' } }, _sum: { total: true } }),
+      prisma.order.count({ where: { ...dateFilter, status: 'pending' } }),
+      prisma.order.count({ where: { ...dateFilter, status: 'preparing' } }),
+      prisma.order.count({ where: { ...dateFilter, status: 'shipped' } }),
+      prisma.order.count({ where: { ...dateFilter, status: 'delivered' } }),
+      prisma.order.count({ where: { ...dateFilter, status: 'cancelled' } }),
       prisma.product.count({ where: { active: true } }),
       prisma.user.count(),
     ]);
 
+    // Orders by day (for chart)
+    const ordersByDay = await prisma.$queryRaw`
+      SELECT DATE("createdAt") as date, COUNT(*)::int as count, COALESCE(SUM("total"), 0) as revenue
+      FROM "Order"
+      WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+      GROUP BY DATE("createdAt")
+      ORDER BY date ASC
+    `;
+
+    // Top products (by quantity sold)
+    const topProducts = await prisma.$queryRaw`
+      SELECT "productName", SUM("quantity")::int as totalQty, SUM("subtotal") as totalRevenue
+      FROM "OrderItem"
+      JOIN "Order" o ON o.id = "OrderItem"."orderId"
+      WHERE o."createdAt" >= ${startDate} AND o."createdAt" <= ${endDate}
+      GROUP BY "productName"
+      ORDER BY "totalQty" DESC
+      LIMIT 10
+    `;
+
+    // Revenue by status
+    const revenueByStatus = await prisma.$queryRaw`
+      SELECT status, COUNT(*)::int as count, COALESCE(SUM("total"), 0) as revenue
+      FROM "Order"
+      WHERE "createdAt" >= ${startDate} AND "createdAt" <= ${endDate}
+      GROUP BY status
+      ORDER BY count DESC
+    `;
+
     const recentOrders = await prisma.order.findMany({
       take: 5,
       orderBy: { createdAt: 'desc' },
-      include: {
-        items: true,
-        delivery: {
-          select: { id: true, name: true, phone: true },
-        },
-      },
+      include: { items: true, delivery: { select: { id: true, name: true, phone: true } } },
     });
 
     res.json({
-      totalOrders,
-      totalRevenue: totalRevenue._sum.total || 0,
-      todayOrders,
-      todayRevenue: todayRevenue._sum.total || 0,
-      pendingOrders,
-      totalProducts,
-      totalCustomers,
+      dateRange: { from: startDate, to: endDate },
+      summary: {
+        totalOrders,
+        totalRevenue: totalRevenue._sum.total || 0,
+        pendingOrders,
+        preparingOrders,
+        shippedOrders,
+        deliveredOrders,
+        cancelledOrders,
+        totalProducts,
+        totalCustomers,
+      },
+      charts: {
+        ordersByDay: ordersByDay.map(r => ({
+          date: r.date,
+          count: Number(r.count),
+          revenue: Number(r.revenue),
+        })),
+        topProducts: topProducts.map(r => ({
+          name: r.productName,
+          quantity: Number(r.totalQty),
+          revenue: Number(r.totalRevenue),
+        })),
+        revenueByStatus: revenueByStatus.map(r => ({
+          status: r.status,
+          count: Number(r.count),
+          revenue: Number(r.revenue),
+        })),
+      },
       recentOrders,
     });
   } catch (err) {
