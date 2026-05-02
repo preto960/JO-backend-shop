@@ -25,6 +25,12 @@ const upload = multer({
   },
 });
 
+// Multer config for CSV bulk upload (in-memory, allows text/csv)
+const uploadCSV = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+});
+
 const router = express.Router();
 
 // GET /products - Listar productos (lectura pública para auth optional)
@@ -212,6 +218,120 @@ router.get('/search', optionalAuth, async (req, res, next) => {
     next(err);
   }
 });
+
+// POST /products/bulk-csv - Carga masiva de productos via CSV
+router.post('/bulk-csv', authenticate, requirePermission('products.create'), uploadCSV.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envio ningun archivo CSV' });
+    }
+    if (!req.file.mimetype.includes('text/csv') && !req.file.originalname.endsWith('.csv')) {
+      return res.status(400).json({ error: 'El archivo debe ser un CSV' });
+    }
+
+    const csvContent = req.file.buffer.toString('utf-8');
+    const lines = csvContent.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    if (lines.length < 2) {
+      return res.status(400).json({ error: 'El CSV debe tener al menos una fila de datos (fila de encabezados + datos)' });
+    }
+
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/['"]/g, ''));
+    
+    // Map column names to field names (flexible)
+    const colMap = {};
+    headers.forEach((h, i) => {
+      if (['nombre', 'name', 'producto', 'product'].includes(h)) colMap.name = i;
+      else if (['descripcion', 'description', 'desc'].includes(h)) colMap.description = i;
+      else if (['precio', 'price', 'costo'].includes(h)) colMap.price = i;
+      else if (['descuento', 'discount', 'dto', 'discountpercent'].includes(h)) colMap.discountPercent = i;
+      else if (['stock', 'cantidad', 'quantity', 'qty'].includes(h)) colMap.stock = i;
+      else if (['categoria', 'category', 'categoria_id', 'categoryid'].includes(h)) colMap.categoryName = i;
+    });
+
+    if (colMap.name === undefined) {
+      return res.status(400).json({ error: 'El CSV debe tener una columna "nombre" o "name"' });
+    }
+
+    // Get all categories for name matching
+    const categories = await prisma.category.findMany({ select: { id: true, name: true } });
+    const categoryMap = {};
+    for (const c of categories) {
+      categoryMap[c.name.toLowerCase()] = c.id;
+    }
+
+    // Default category if none specified
+    const defaultCategory = categories[0]?.id;
+
+    const results = { created: 0, errors: [], skipped: 0 };
+    const products = [];
+
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseCSVLine(lines[i]);
+      const name = (cols[colMap.name] || '').trim().replace(/['"]/g, '');
+      
+      if (!name || name.length < 2) {
+        results.errors.push({ row: i + 1, error: 'Nombre vacio o muy corto' });
+        continue;
+      }
+
+      const description = colMap.description !== undefined ? (cols[colMap.description] || '').trim().replace(/['"]/g, '') : '';
+      const price = colMap.price !== undefined ? parseFloat((cols[colMap.price] || '0').replace(/['"]/g, '')) : 0;
+      const discountPercent = colMap.discountPercent !== undefined ? parseFloat((cols[colMap.discountPercent] || '0').replace(/['"]/g, '')) : 0;
+      const stock = colMap.stock !== undefined ? parseInt((cols[colMap.stock] || '0').replace(/['"]/g, '')) : 0;
+      const categoryName = colMap.categoryName !== undefined ? (cols[colMap.categoryName] || '').trim().replace(/['"]/g, '').toLowerCase() : '';
+      const categoryId = categoryMap[categoryName] || defaultCategory;
+
+      if (isNaN(price) || price < 0) {
+        results.errors.push({ row: i + 1, name, error: 'Precio invalido' });
+        continue;
+      }
+
+      const slug = sanitize(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const finalSlug = `${slug}-${Date.now()}-${i}`;
+
+      products.push({
+        name: sanitize(name),
+        slug: finalSlug,
+        description: description || null,
+        price,
+        discountPercent: isNaN(discountPercent) ? 0 : Math.min(100, Math.max(0, discountPercent)),
+        stock: isNaN(stock) ? 0 : Math.max(0, stock),
+        categoryId: categoryId || defaultCategory,
+        active: true,
+      });
+      results.created++;
+    }
+
+    // Bulk create products
+    if (products.length > 0) {
+      await prisma.product.createMany({ data: products, skipDuplicates: true });
+    }
+
+    res.json({
+      message: `Importacion completada: ${results.created} productos creados, ${results.errors.length} errores, ${results.skipped} omitidos`,
+      results,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Helper: parse CSV line respecting quoted fields
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' && !inQuotes) { inQuotes = true; continue; }
+    if (char === '"' && inQuotes) { inQuotes = false; continue; }
+    if (char === ',' && !inQuotes) { result.push(current); current = ''; continue; }
+    current += char;
+  }
+  result.push(current);
+  return result;
+}
 
 // GET /products/:id - Detalle de producto
 router.get('/:id', async (req, res, next) => {
