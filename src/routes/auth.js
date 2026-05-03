@@ -240,24 +240,28 @@ router.post('/login', async (req, res, next) => {
       });
     }
 
-    // === Validar rol si la app lo requiere ===
+    // === Validar rol si la app lo requiere (admin tiene acceso total) ===
     if (sanitizedRoles && sanitizedRoles.length > 0) {
       const { roles } = await getUserPermissions(user.id);
       const userRoleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
-      const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
-      if (!hasRequiredRole) {
-        const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
-        if (sanitizedRoles.length === 1) {
-          const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+      // Admin tiene acceso a cualquier app sin restricción
+      const isAdmin = userRoleNames.includes('admin');
+      if (!isAdmin) {
+        const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
+        if (!hasRequiredRole) {
+          const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
+          if (sanitizedRoles.length === 1) {
+            const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+            return res.status(403).json({
+              error: `No tienes acceso como ${label}. Debes registrarte.`,
+              code: 'ROLE_NOT_FOUND',
+            });
+          }
           return res.status(403).json({
-            error: `No tienes acceso como ${label}. Debes registrarte.`,
+            error: 'No tienes acceso a esta aplicación.',
             code: 'ROLE_NOT_FOUND',
           });
         }
-        return res.status(403).json({
-          error: 'No tienes acceso a esta aplicación.',
-          code: 'ROLE_NOT_FOUND',
-        });
       }
     }
 
@@ -438,7 +442,7 @@ router.post('/login-verify', async (req, res, next) => {
     // Obtener roles y permisos
     const { roles, permissions } = await getUserPermissions(user.id);
 
-    // === Validar rol si la app lo requiere ===
+    // === Validar rol si la app lo requiere (admin tiene acceso total) ===
     let sanitizedRoles = null;
     if (role) {
       sanitizedRoles = Array.isArray(role)
@@ -447,20 +451,24 @@ router.post('/login-verify', async (req, res, next) => {
     }
     if (sanitizedRoles && sanitizedRoles.length > 0) {
       const userRoleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
-      const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
-      if (!hasRequiredRole) {
-        const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
-        if (sanitizedRoles.length === 1) {
-          const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+      // Admin tiene acceso a cualquier app sin restricción
+      const isAdmin = userRoleNames.includes('admin');
+      if (!isAdmin) {
+        const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
+        if (!hasRequiredRole) {
+          const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
+          if (sanitizedRoles.length === 1) {
+            const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+            return res.status(403).json({
+              error: `No tienes acceso como ${label}. Debes registrarte.`,
+              code: 'ROLE_NOT_FOUND',
+            });
+          }
           return res.status(403).json({
-            error: `No tienes acceso como ${label}. Debes registrarte.`,
+            error: 'No tienes acceso a esta aplicación.',
             code: 'ROLE_NOT_FOUND',
-          });
+            });
         }
-        return res.status(403).json({
-          error: 'No tienes acceso a esta aplicación.',
-          code: 'ROLE_NOT_FOUND',
-        });
       }
     }
 

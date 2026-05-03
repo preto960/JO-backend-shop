@@ -173,4 +173,113 @@ async function upsertConfig(key, value) {
   });
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIG ENDPOINTS PARA JO-Delivery (apariencia independiente)
+// ═══════════════════════════════════════════════════════════════════════
+
+const DELIVERY_CONFIG_KEYS = ['delivery_name', 'delivery_logo_url', 'delivery_primary_color', 'delivery_accent_color'];
+
+// GET /config/delivery - Obtener configuración de apariencia de JO-Delivery (público)
+router.get('/delivery', async (req, res, next) => {
+  try {
+    const configs = await prisma.systemConfig.findMany({
+      where: { key: { in: DELIVERY_CONFIG_KEYS } },
+    });
+    const configMap = {
+      delivery_name: 'JO-Delivery',
+      delivery_logo_url: '',
+      delivery_primary_color: '#FF6B35',
+      delivery_accent_color: '#E94560',
+    };
+    for (const c of configs) {
+      configMap[c.key] = c.value;
+    }
+    res.json(configMap);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT /config/delivery - Actualizar configuración de apariencia de JO-Delivery (solo admin)
+router.put('/delivery', authenticate, async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    const { settings } = req.body;
+    if (!settings || typeof settings !== 'object') {
+      return res.status(400).json({ error: 'Se requiere un objeto "settings" con la configuración' });
+    }
+
+    const results = {};
+    for (const [key, value] of Object.entries(settings)) {
+      if (!DELIVERY_CONFIG_KEYS.includes(key)) continue;
+      const strValue = String(value);
+      await upsertConfig(key, strValue);
+      results[key] = strValue;
+    }
+
+    res.json({
+      message: 'Configuración de Delivery actualizada',
+      settings: results,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /config/delivery/upload-logo - Subir logo de JO-Delivery (solo admin)
+router.post('/delivery/upload-logo', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envió ningún archivo' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN no configurado' });
+    }
+
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `config_delivery/${Date.now()}-${safeName}`;
+
+    const blob = await put(blobName, req.file.buffer, {
+      access: 'public',
+      contentType: req.file.mimetype,
+      addRandomSuffix: false,
+    });
+
+    await upsertConfig('delivery_logo_url', blob.url);
+
+    res.json({ success: true, url: blob.url, message: 'Logo de Delivery actualizado' });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el límite de 2MB' });
+      }
+    }
+    next(err);
+  }
+});
+
+// DELETE /config/delivery/upload-logo - Eliminar logo de JO-Delivery (solo admin)
+router.delete('/delivery/upload-logo', authenticate, async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    await upsertConfig('delivery_logo_url', '');
+
+    res.json({ success: true, message: 'Logo de Delivery eliminado' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
