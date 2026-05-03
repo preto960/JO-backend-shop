@@ -242,7 +242,7 @@ router.post('/login', async (req, res, next) => {
         const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
         const label = roleLabels[sanitizedRole] || sanitizedRole;
         return res.status(403).json({
-          error: `No tienes acceso como ${label}. Tu cuenta no tiene el rol requerido para esta aplicación.`,
+          error: `No tienes acceso como ${label}. Debes registrarte.`,
           code: 'ROLE_NOT_FOUND',
         });
       }
@@ -433,7 +433,7 @@ router.post('/login-verify', async (req, res, next) => {
         const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
         const label = roleLabels[sanitizedRole] || sanitizedRole;
         return res.status(403).json({
-          error: `No tienes acceso como ${label}. Tu cuenta no tiene el rol requerido para esta aplicación.`,
+          error: `No tienes acceso como ${label}. Debes registrarte.`,
           code: 'ROLE_NOT_FOUND',
         });
       }
