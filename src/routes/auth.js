@@ -196,7 +196,7 @@ router.post('/register', async (req, res, next) => {
 // POST /auth/login - Inicio de sesión
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, role } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -206,6 +206,7 @@ router.post('/login', async (req, res, next) => {
     }
 
     const sanitizedEmail = sanitize(email)?.toLowerCase();
+    const sanitizedRole = role ? sanitize(role)?.toLowerCase() : null;
 
     const user = await prisma.user.findUnique({
       where: { email: sanitizedEmail },
@@ -231,6 +232,20 @@ router.post('/login', async (req, res, next) => {
         error: 'Credenciales inválidas',
         code: 'INVALID_CREDENTIALS',
       });
+    }
+
+    // === Validar rol si la app lo requiere ===
+    if (sanitizedRole) {
+      const { roles } = await getUserPermissions(user.id);
+      const roleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
+      if (!roleNames.includes(sanitizedRole)) {
+        const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
+        const label = roleLabels[sanitizedRole] || sanitizedRole;
+        return res.status(403).json({
+          error: `No tienes acceso como ${label}. Tu cuenta no tiene el rol requerido para esta aplicación.`,
+          code: 'ROLE_NOT_FOUND',
+        });
+      }
     }
 
     // === 2FA: Solo si el usuario lo tiene activado ===
@@ -312,7 +327,7 @@ router.post('/login', async (req, res, next) => {
 // POST /auth/login-verify - Verificar OTP y completar login (email o TOTP o backup code)
 router.post('/login-verify', async (req, res, next) => {
   try {
-    const { email, code, type } = req.body;
+    const { email, code, type, role } = req.body;
 
     if (!email || !code) {
       return res.status(400).json({
@@ -409,6 +424,20 @@ router.post('/login-verify', async (req, res, next) => {
 
     // Obtener roles y permisos
     const { roles, permissions } = await getUserPermissions(user.id);
+
+    // === Validar rol si la app lo requiere ===
+    const sanitizedRole = role ? sanitize(role)?.toLowerCase() : null;
+    if (sanitizedRole) {
+      const roleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
+      if (!roleNames.includes(sanitizedRole)) {
+        const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
+        const label = roleLabels[sanitizedRole] || sanitizedRole;
+        return res.status(403).json({
+          error: `No tienes acceso como ${label}. Tu cuenta no tiene el rol requerido para esta aplicación.`,
+          code: 'ROLE_NOT_FOUND',
+        });
+      }
+    }
 
     const token = generateToken(user, roles, permissions);
     const refreshToken = generateRefreshToken(user);
