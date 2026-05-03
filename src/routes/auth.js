@@ -82,14 +82,71 @@ router.post('/register', async (req, res, next) => {
       where: { email: sanitizedEmail },
     });
 
+    // Asignar rol: delivery o customer (por defecto)
+    const allowedRoles = ['customer', 'delivery'];
+    const targetRole = allowedRoles.includes(sanitizedRole) ? sanitizedRole : 'customer';
+
     if (existingUser) {
-      return res.status(409).json({
-        error: 'Ya existe una cuenta con ese email',
-        field: 'email',
+      // ── Email ya registrado: agregar el nuevo rol al usuario existente ──
+      const assignedRole = await prisma.role.findUnique({ where: { name: targetRole } });
+      if (!assignedRole) {
+        return res.status(400).json({
+          error: 'Rol no valido',
+          field: 'role',
+        });
+      }
+
+      // Verificar si ya tiene este rol asignado
+      const existingRole = await prisma.userRole.findFirst({
+        where: { userId: existingUser.id, roleId: assignedRole.id },
+      });
+
+      if (existingRole) {
+        // Ya tiene el rol: verificar contraseña para hacer login automático
+        const isMatch = await comparePassword(password, existingUser.password);
+        if (!isMatch) {
+          return res.status(401).json({
+            error: 'Contraseña incorrecta',
+            code: 'WRONG_PASSWORD',
+          });
+        }
+      } else {
+        // No tiene el rol: verificar contraseña antes de agregarlo
+        const isMatch = await comparePassword(password, existingUser.password);
+        if (!isMatch) {
+          return res.status(401).json({
+            error: 'Contraseña incorrecta',
+            code: 'WRONG_PASSWORD',
+          });
+        }
+
+        // Agregar el nuevo rol
+        await prisma.userRole.create({
+          data: { userId: existingUser.id, roleId: assignedRole.id },
+        });
+      }
+
+      // Obtener permisos actualizados (con el nuevo rol)
+      const { roles, permissions } = await getUserPermissions(existingUser.id);
+      const token = generateToken(existingUser, roles, permissions);
+      const refreshToken = generateRefreshToken(existingUser);
+
+      return res.status(200).json({
+        message: `Rol '${targetRole}' asignado a tu cuenta existente`,
+        user: {
+          id: existingUser.id,
+          name: existingUser.name,
+          email: existingUser.email,
+          phone: existingUser.phone,
+          roles,
+          permissions,
+        },
+        token,
+        refreshToken,
       });
     }
 
-    // Crear usuario
+    // ── Nuevo usuario: crear cuenta con el rol indicado ──
     const hashedPassword = await hashPassword(password);
     const user = await prisma.user.create({
       data: {
@@ -102,9 +159,6 @@ router.post('/register', async (req, res, next) => {
       },
     });
 
-    // Asignar rol: delivery o customer (por defecto)
-    const allowedRoles = ['customer', 'delivery'];
-    const targetRole = allowedRoles.includes(sanitizedRole) ? sanitizedRole : 'customer';
     const assignedRole = await prisma.role.findUnique({ where: { name: targetRole } });
     if (assignedRole) {
       await prisma.userRole.create({
