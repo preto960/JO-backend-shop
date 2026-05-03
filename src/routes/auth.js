@@ -206,7 +206,13 @@ router.post('/login', async (req, res, next) => {
     }
 
     const sanitizedEmail = sanitize(email)?.toLowerCase();
-    const sanitizedRole = role ? sanitize(role)?.toLowerCase() : null;
+    // role puede ser string o array de strings
+    let sanitizedRoles = null;
+    if (role) {
+      sanitizedRoles = Array.isArray(role)
+        ? role.map(r => sanitize(r)?.toLowerCase()).filter(Boolean)
+        : [sanitize(role)?.toLowerCase()].filter(Boolean);
+    }
 
     const user = await prisma.user.findUnique({
       where: { email: sanitizedEmail },
@@ -235,14 +241,21 @@ router.post('/login', async (req, res, next) => {
     }
 
     // === Validar rol si la app lo requiere ===
-    if (sanitizedRole) {
+    if (sanitizedRoles && sanitizedRoles.length > 0) {
       const { roles } = await getUserPermissions(user.id);
-      const roleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
-      if (!roleNames.includes(sanitizedRole)) {
-        const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
-        const label = roleLabels[sanitizedRole] || sanitizedRole;
+      const userRoleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
+      const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
+      if (!hasRequiredRole) {
+        const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
+        if (sanitizedRoles.length === 1) {
+          const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+          return res.status(403).json({
+            error: `No tienes acceso como ${label}. Debes registrarte.`,
+            code: 'ROLE_NOT_FOUND',
+          });
+        }
         return res.status(403).json({
-          error: `No tienes acceso como ${label}. Debes registrarte.`,
+          error: 'No tienes acceso a esta aplicación.',
           code: 'ROLE_NOT_FOUND',
         });
       }
@@ -426,14 +439,26 @@ router.post('/login-verify', async (req, res, next) => {
     const { roles, permissions } = await getUserPermissions(user.id);
 
     // === Validar rol si la app lo requiere ===
-    const sanitizedRole = role ? sanitize(role)?.toLowerCase() : null;
-    if (sanitizedRole) {
-      const roleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
-      if (!roleNames.includes(sanitizedRole)) {
-        const roleLabels = { customer: 'cliente', delivery: 'repartidor' };
-        const label = roleLabels[sanitizedRole] || sanitizedRole;
+    let sanitizedRoles = null;
+    if (role) {
+      sanitizedRoles = Array.isArray(role)
+        ? role.map(r => sanitize(r)?.toLowerCase()).filter(Boolean)
+        : [sanitize(role)?.toLowerCase()].filter(Boolean);
+    }
+    if (sanitizedRoles && sanitizedRoles.length > 0) {
+      const userRoleNames = roles.map(r => (typeof r === 'string' ? r : r.name));
+      const hasRequiredRole = sanitizedRoles.some(r => userRoleNames.includes(r));
+      if (!hasRequiredRole) {
+        const roleLabels = { customer: 'cliente', delivery: 'repartidor', admin: 'admin', editor: 'editor' };
+        if (sanitizedRoles.length === 1) {
+          const label = roleLabels[sanitizedRoles[0]] || sanitizedRoles[0];
+          return res.status(403).json({
+            error: `No tienes acceso como ${label}. Debes registrarte.`,
+            code: 'ROLE_NOT_FOUND',
+          });
+        }
         return res.status(403).json({
-          error: `No tienes acceso como ${label}. Debes registrarte.`,
+          error: 'No tienes acceso a esta aplicación.',
           code: 'ROLE_NOT_FOUND',
         });
       }
