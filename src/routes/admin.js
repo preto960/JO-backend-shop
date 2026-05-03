@@ -201,14 +201,40 @@ router.delete('/roles/:id', authenticate, requirePermission('users.delete'), asy
 // GET /auth/users - Listar usuarios con sus roles (requiere permiso users.read)
 router.get('/users', authenticate, requirePermission('users.read'), async (req, res, next) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const { page = 1, limit = 20, search, role } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    // Filtros
+    const where = {};
+
+    // Filtro por búsqueda (nombre o email)
+    if (search && search.trim()) {
+      const term = search.trim();
+      where.OR = [
+        { name: { contains: term, mode: 'insensitive' } },
+        { email: { contains: term, mode: 'insensitive' } },
+      ];
+    }
+
+    // Filtro por rol: solo usuarios que tengan este rol asignado
+    if (role && role.trim()) {
+      const roleName = role.trim().toLowerCase();
+      const roleRecord = await prisma.role.findUnique({ where: { name: roleName } });
+      if (roleRecord) {
+        where.roles = {
+          some: { roleId: roleRecord.id },
+        };
+      }
+    }
 
     const [users, total] = await Promise.all([
       prisma.user.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip,
-        take: parseInt(limit),
+        take: limitNum,
         select: {
           id: true,
           name: true,
@@ -235,7 +261,7 @@ router.get('/users', authenticate, requirePermission('users.read'), async (req, 
           _count: { select: { orders: true } },
         },
       }),
-      prisma.user.count(),
+      prisma.user.count({ where }),
     ]);
 
     const formatted = users.map(u => ({
@@ -248,10 +274,10 @@ router.get('/users', authenticate, requirePermission('users.read'), async (req, 
     res.json({
       data: formatted,
       pagination: {
-        page: parseInt(page),
-        limit: parseInt(limit),
+        page: pageNum,
+        limit: limitNum,
         total,
-        totalPages: Math.ceil(total / parseInt(limit)),
+        totalPages: Math.ceil(total / limitNum),
       },
     });
   } catch (err) {
