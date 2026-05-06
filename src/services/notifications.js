@@ -11,12 +11,16 @@ import prisma from '../lib/prisma.js';
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 // Obtener IDs de usuarios con un rol especifico
+// Para el rol 'delivery', solo incluye usuarios conectados (isOnline = true)
 async function getUserIdsByRole(roleName) {
+  const where = {
+    active: true,
+    roles: { some: { role: { name: roleName } } },
+    // Solo filtrar isOnline para deliverys
+    ...(roleName === 'delivery' ? { isOnline: true } : {}),
+  };
   const users = await prisma.user.findMany({
-    where: {
-      active: true,
-      roles: { some: { role: { name: roleName } } },
-    },
+    where,
     select: { id: true },
   });
   return users.map(u => String(u.id));

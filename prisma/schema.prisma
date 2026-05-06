@@ -85,6 +85,7 @@ model User {
   phone         String?   @db.VarChar(30)
   birthdate     String?   @db.VarChar(10)
   active                Boolean   @default(true)
+  isOnline              Boolean   @default(false) @map("is_online")
   twoFactorEnabled     Boolean   @default(false) @map("two_factor_enabled")
   twoFactorType        String?   @db.VarChar(20) @map("two_factor_type")
   twoFactorSecret      String?   @db.Text @map("two_factor_secret")

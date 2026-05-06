@@ -30,6 +30,7 @@ const formatUserResponse = async (user) => {
     phone: user.phone,
     birthdate: user.birthdate,
     active: user.active,
+    isOnline: user.isOnline || false,
     twoFactorEnabled: user.twoFactorEnabled || false,
     twoFactorType: user.twoFactorType || null,
     hasBackupCodes: !!(user.twoFactorBackupCodes && JSON.parse(user.twoFactorBackupCodes).length > 0),
@@ -657,6 +658,60 @@ router.put('/profile', async (req, res, next) => {
     res.json({
       message: 'Perfil actualizado',
       user: userResponse,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /auth/profile/status - Cambiar estado conectado/desconectado (delivery)
+router.patch('/profile/status', async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    const { verifyToken } = await import('../services/auth.js');
+    const decoded = verifyToken(authHeader.split(' ')[1]);
+    if (!decoded || decoded.valid === false) {
+      return res.status(401).json({ error: 'Token invalido' });
+    }
+
+    const { isOnline } = req.body;
+
+    if (typeof isOnline !== 'boolean') {
+      return res.status(400).json({
+        error: 'El campo "isOnline" es requerido (true/false)',
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: { id: true, active: true, roles: { select: { roleId: true, role: { select: { name: true } } } } },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    const roleNames = user.roles.map(r => r.role.name);
+
+    // Solo deliverys pueden cambiar su estado online
+    if (!roleNames.includes('delivery') && !roleNames.includes('admin')) {
+      return res.status(403).json({
+        error: 'Solo los repartidores pueden cambiar su estado de conexion',
+      });
+    }
+
+    await prisma.user.update({
+      where: { id: decoded.id },
+      data: { isOnline },
+    });
+
+    res.json({
+      message: isOnline ? 'Ahora estas conectado' : 'Ahora estas desconectado',
+      isOnline,
     });
   } catch (err) {
     next(err);
