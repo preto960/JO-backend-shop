@@ -25,7 +25,7 @@ router.post('/auth', async (req, res) => {
 
       const { verifyToken } = await import('../services/auth.js');
       const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || !decoded.valid) {
+      if (!decoded || decoded.valid === false) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 
@@ -59,7 +59,7 @@ router.post('/auth', async (req, res) => {
 
       const { verifyToken } = await import('../services/auth.js');
       const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || !decoded.valid) {
+      if (!decoded || decoded.valid === false) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 
@@ -108,7 +108,7 @@ router.post('/auth', async (req, res) => {
 
       const { verifyToken } = await import('../services/auth.js');
       const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || !decoded.valid) {
+      if (!decoded || decoded.valid === false) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 
@@ -151,7 +151,7 @@ router.post('/auth', async (req, res) => {
 
       const { verifyToken } = await import('../services/auth.js');
       const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || !decoded.valid) {
+      if (!decoded || decoded.valid === false) {
         return res.status(401).json({ error: 'Invalid token' });
       }
 
