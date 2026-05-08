@@ -20,11 +20,10 @@ async function resolveUser(req) {
         where: { email },
         include: {
           roles: { include: { role: true } },
-          permissions: { include: { permission: true } },
         },
       });
-      await prisma.$disconnect();
       if (user) {
+        await prisma.$disconnect();
         return {
           id: user.id,
           name: user.name,
@@ -32,9 +31,40 @@ async function resolveUser(req) {
           roles: user.roles.map(ur => ur.role.name),
         };
       }
+      // Email not found — fallback to first admin user
+      const adminUser = await prisma.user.findFirst({
+        where: { roles: { some: { role: { name: 'admin' } } } },
+        include: { roles: { include: { role: true } } },
+      });
+      await prisma.$disconnect();
+      if (adminUser) {
+        return {
+          id: adminUser.id,
+          name: adminUser.name,
+          email: adminUser.email,
+          roles: adminUser.roles.map(ur => ur.role.name),
+        };
+      }
     }
-    // Fallback admin
-    return { id: 0, name: 'Service Bridge', email: 'service@bridge', roles: ['admin'] };
+    // No email header — fallback to first admin
+    const { PrismaClient } = await import('@prisma/client');
+    const { PrismaPg } = await import('@prisma/adapter-pg');
+    const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+    const prisma = new PrismaClient({ adapter });
+    const adminUser = await prisma.user.findFirst({
+      where: { roles: { some: { role: { name: 'admin' } } } },
+      include: { roles: { include: { role: true } } },
+    });
+    await prisma.$disconnect();
+    if (adminUser) {
+      return {
+        id: adminUser.id,
+        name: adminUser.name,
+        email: adminUser.email,
+        roles: adminUser.roles.map(ur => ur.role.name),
+      };
+    }
+    return null;
   }
 
   // 2) Standard JWT Bearer

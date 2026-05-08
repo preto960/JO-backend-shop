@@ -39,13 +39,33 @@ export const authenticate = async (req, res, next) => {
           permissions: [...new Set(allPerms)],
         };
       } else {
-        // Fallback: admin with all permissions if no user found
-        req.user = {
-          id: 0,
-          email: 'service@bridge',
-          roles: ['admin'],
-          permissions: ['admin-chat.view', 'admin-chat.send', 'dashboard.view'],
-        };
+        // Email not found in backend — look up first admin user as fallback
+        const adminUser = await prisma.user.findFirst({
+          where: { roles: { some: { role: { name: 'admin' } } } },
+          include: {
+            roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
+            permissions: { include: { permission: true } },
+          },
+        });
+
+        if (adminUser) {
+          const roleNames = adminUser.roles.map(ur => ur.role.name);
+          const allPerms = [];
+          for (const ur of adminUser.roles) {
+            for (const rp of ur.role.permissions) allPerms.push(rp.permission.code);
+          }
+          for (const up of adminUser.permissions) allPerms.push(up.permission.code);
+
+          req.user = {
+            id: adminUser.id,
+            email: adminUser.email,
+            name: adminUser.name,
+            roles: roleNames,
+            permissions: [...new Set(allPerms)],
+          };
+        } else {
+          return res.status(401).json({ error: 'No admin user found for service bridge' });
+        }
       }
       return next();
     }
