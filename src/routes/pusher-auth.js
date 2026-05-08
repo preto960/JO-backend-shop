@@ -182,12 +182,16 @@ router.post('/auth', async (req, res) => {
         useTLS: true,
       });
 
+      // Read platform from client header so each UI can filter by source
+      const platform = req.headers['x-platform'] || 'unknown';
+
       const presenceData = {
         user_id: String(decoded.id),
         user_info: {
           id: decoded.id,
           name: decoded.name || decoded.email,
           email: decoded.email,
+          platform,
         },
       };
 
