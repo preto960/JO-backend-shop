@@ -257,6 +257,128 @@ export async function ensureColumns() {
   } catch (err) {
     console.error('[DB] Error migrando permisos batches:', err.message);
   }
+
+  // ─── Tabla conversations (chat) ────────────────────────────────────────
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'conversations';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando tabla conversations...');
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS conversations (
+          id SERIAL PRIMARY KEY,
+          type VARCHAR(20) NOT NULL DEFAULT 'order',
+          order_id INTEGER UNIQUE REFERENCES orders(id) ON DELETE CASCADE,
+          participant_ids INTEGER[] DEFAULT '{}',
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+      `);
+      console.log('[DB] Tabla conversations creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration conversations:', err.message);
+  }
+
+  // ─── Tabla messages (chat) ─────────────────────────────────────────────
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'messages';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando tabla messages...');
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS messages (
+          id SERIAL PRIMARY KEY,
+          conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+          sender_id INTEGER NOT NULL REFERENCES users(id),
+          content TEXT NOT NULL,
+          type VARCHAR(20) NOT NULL DEFAULT 'text',
+          read_at TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+      `);
+      console.log('[DB] Tabla messages creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration messages:', err.message);
+  }
+
+  // ─── Tabla location_updates (tracking) ─────────────────────────────────
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'location_updates';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando tabla location_updates...');
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS location_updates (
+          id SERIAL PRIMARY KEY,
+          order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          lat DOUBLE PRECISION NOT NULL,
+          lng DOUBLE PRECISION NOT NULL,
+          heading DOUBLE PRECISION,
+          speed DOUBLE PRECISION,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_location_updates_order_id ON location_updates(order_id);
+        CREATE INDEX IF NOT EXISTS idx_location_updates_user_id ON location_updates(user_id);
+        CREATE INDEX IF NOT EXISTS idx_location_updates_created_at ON location_updates(created_at);
+      `);
+      console.log('[DB] Tabla location_updates creada.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration location_updates:', err.message);
+  }
+
+  // ─── Permisos de chat y tracking ───────────────────────────────────────
+  try {
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO permissions (name, code, module, description, "created_at") VALUES
+        ('Ver chat admin', 'admin-chat.view', 'admin-chat', 'Permite ver el chat de administradores', NOW()),
+        ('Enviar chat admin', 'admin-chat.send', 'admin-chat', 'Permite enviar mensajes al chat de administradores', NOW()),
+        ('Ver chat delivery', 'delivery.chat.view', 'delivery', 'Permite acceder al chat con clientes por pedido', NOW()),
+        ('Ver tracking', 'tracking.view', 'tracking', 'Permite ver ubicación en tiempo real de entregas', NOW()),
+        ('Enviar tracking', 'tracking.update', 'tracking', 'Permite enviar ubicación en tiempo real', NOW())
+      ON CONFLICT (code) DO NOTHING;
+    `);
+
+    // Asignar permisos chat/tracking a roles
+    await prisma.$executeRawUnsafe(`
+      INSERT INTO role_permissions (role_id, permission_id)
+      SELECT r.id, p.id
+      FROM roles r
+      CROSS JOIN permissions p
+      WHERE p.code IN ('admin-chat.view', 'admin-chat.send', 'delivery.chat.view', 'tracking.view', 'tracking.update')
+        AND r.name = 'admin'
+        AND NOT EXISTS (
+          SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id
+        )
+      ON CONFLICT DO NOTHING;
+      INSERT INTO role_permissions (role_id, permission_id)
+      SELECT r.id, p.id
+      FROM roles r
+      CROSS JOIN permissions p
+      WHERE p.code IN ('delivery.chat.view', 'tracking.view', 'tracking.update')
+        AND r.name = 'delivery'
+        AND NOT EXISTS (
+          SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id AND rp.permission_id = p.id
+        )
+      ON CONFLICT DO NOTHING;
+    `);
+
+    console.log('[DB] Permisos de chat/tracking creados y asignados.');
+  } catch (err) {
+    console.error('[DB] Error migrando permisos chat/tracking:', err.message);
+  }
 }
 
 export default prisma;

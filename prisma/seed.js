@@ -84,6 +84,20 @@ const MODULES = {
       { name: 'Eliminar lotes', code: 'batches.delete', description: 'Permite eliminar lotes' },
     ],
   },
+  'admin-chat': {
+    name: 'Chat Admin',
+    permissions: [
+      { name: 'Ver chat admin', code: 'admin-chat.view', description: 'Permite ver el chat de administradores' },
+      { name: 'Enviar chat admin', code: 'admin-chat.send', description: 'Permite enviar mensajes al chat de administradores' },
+    ],
+  },
+  tracking: {
+    name: 'Tracking',
+    permissions: [
+      { name: 'Ver tracking', code: 'tracking.view', description: 'Permite ver ubicación en tiempo real de entregas' },
+      { name: 'Enviar tracking', code: 'tracking.update', description: 'Permite enviar ubicación en tiempo real' },
+    ],
+  },
 };
 
 async function main() {
@@ -209,9 +223,11 @@ async function main() {
   // Delivery: puede ver entregas, aceptar y confirmar
   const deliveryPermCodes = [
     'delivery.view_menu', 'delivery.read', 'delivery.accept', 'delivery.confirm',
+    'delivery.chat.view',
     'orders.view_menu', 'orders.read',
     'products.view_menu', 'products.read',
     'categories.view_menu', 'categories.read',
+    'tracking.view', 'tracking.update',
   ];
   const deliveryPerms = allPermissions.filter(p => deliveryPermCodes.includes(p.code));
   await prisma.rolePermission.createMany({

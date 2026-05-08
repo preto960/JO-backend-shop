@@ -15,6 +15,9 @@ import verificationRouter from './routes/verification.js';
 import pushRoutes from './routes/push.js';
 import bannersRouter from './routes/banners.js';
 import productBatchesRouter from './routes/product-batches.js';
+import chatsRouter from './routes/chats.js';
+import trackingRouter from './routes/tracking.js';
+import pusherAuthRouter from './routes/pusher-auth.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -47,6 +50,9 @@ app.use('/auth/otp', verificationRouter);
 app.use('/api/push', pushRoutes);
 app.use('/banners', bannersRouter);
 app.use('/product-batches', productBatchesRouter);
+app.use('/chats', chatsRouter);
+app.use('/tracking', trackingRouter);
+app.use('/pusher', pusherAuthRouter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -127,6 +133,21 @@ app.get('/', (req, res) => {
       update: 'PUT /addresses/:id (auth)',
       setDefault: 'PUT /addresses/:id/default (auth)',
       delete: 'DELETE /addresses/:id (auth)',
+    },
+    chats: {
+      orderMessages: 'GET /chats/orders/:orderId/messages (auth)',
+      sendOrderMessage: 'POST /chats/orders/:orderId/messages (auth)',
+      adminMessages: 'GET /chats/admin/messages (admin-chat.view)',
+      sendAdminMessage: 'POST /chats/admin/messages (admin-chat.send)',
+      myConversations: 'GET /chats/my-conversations (auth)',
+    },
+    tracking: {
+      sendLocation: 'POST /tracking/location (auth)',
+      locationHistory: 'GET /tracking/:orderId/history (auth)',
+      latestLocation: 'GET /tracking/:orderId/latest (auth)',
+    },
+    pusher: {
+      authenticate: 'POST /pusher/auth (auth)',
     },
   });
 });

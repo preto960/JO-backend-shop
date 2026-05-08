@@ -7,6 +7,7 @@ import {
   notifyOrderAccepted,
   notifyOrderStatusChange,
 } from '../services/notifications.js';
+import { emitPusher } from '../config/pusher.js';
 
 const router = express.Router();
 
@@ -374,6 +375,20 @@ router.post('/', authenticate, requirePermission('orders.create'), async (req, r
       console.error('[Orders] Error enviando notificaciones de nuevo pedido:', notifErr.message);
     }
 
+    // Pusher: notificar al usuario sobre su nuevo pedido
+    try {
+      if (order.userId) {
+        await emitPusher(`private-user-${order.userId}`, 'order-created', {
+          orderId: order.id,
+          status: order.status,
+          total: order.total,
+          message: 'Tu pedido ha sido creado exitosamente',
+        });
+      }
+    } catch (pusherErr) {
+      console.error('[Orders] Error Pusher notificando nuevo pedido:', pusherErr.message);
+    }
+
     res.status(201).json({
       message: 'Pedido creado exitosamente',
       order,
@@ -454,6 +469,26 @@ router.post('/:id/accept', authenticate, requirePermission('delivery.accept'), a
       console.error('[Orders] Error enviando notificaciones de aceptacion:', notifErr.message);
     }
 
+    // Pusher: notificar al cliente que su pedido fue aceptado
+    try {
+      if (updated.userId) {
+        await emitPusher(`private-user-${updated.userId}`, 'order-updated', {
+          orderId: updated.id,
+          status: 'shipped',
+          delivery: updated.delivery ? { id: updated.delivery.id, name: updated.delivery.name } : null,
+          message: `Tu pedido ha sido aceptado por ${updated.delivery?.name || 'un repartidor'}`,
+        });
+      }
+      // Notificar al canal del pedido
+      await emitPusher(`private-order-${orderId}`, 'status-changed', {
+        orderId: updated.id,
+        status: 'shipped',
+        delivery: updated.delivery,
+      });
+    } catch (pusherErr) {
+      console.error('[Orders] Error Pusher notificando aceptacion:', pusherErr.message);
+    }
+
     res.json({
       message: 'Pedido aceptado correctamente',
       order: updated,
@@ -523,6 +558,30 @@ router.put('/:id/status', authenticate, async (req, res, next) => {
       } catch (notifErr) {
         console.error('[Orders] Error notificando cambio de estado:', notifErr.message);
       }
+    }
+
+    // Pusher: emitir cambio de estado en tiempo real
+    try {
+      if (updated.userId) {
+        await emitPusher(`private-user-${updated.userId}`, 'order-updated', {
+          orderId: updated.id,
+          status: updated.status,
+          message: `Tu pedido cambió a: ${updated.status}`,
+        });
+      }
+      if (updated.deliveryId) {
+        await emitPusher(`private-user-${updated.deliveryId}`, 'order-updated', {
+          orderId: updated.id,
+          status: updated.status,
+          message: `Pedido #${updated.id} cambió a: ${updated.status}`,
+        });
+      }
+      await emitPusher(`private-order-${orderId}`, 'status-changed', {
+        orderId: updated.id,
+        status: updated.status,
+      });
+    } catch (pusherErr) {
+      console.error('[Orders] Error Pusher notificando cambio de estado:', pusherErr.message);
     }
 
     res.json({
@@ -597,6 +656,32 @@ router.put('/:id/assign', authenticate, async (req, res, next) => {
       }
     }
 
+    // Pusher: notificar delivery asignado y al cliente
+    try {
+      if (updated.userId) {
+        await emitPusher(`private-user-${updated.userId}`, 'order-updated', {
+          orderId: updated.id,
+          status: 'confirmed',
+          delivery: updated.delivery ? { id: updated.delivery.id, name: updated.delivery.name, phone: updated.delivery.phone } : null,
+          message: 'Tu pedido ha sido confirmado y se asignó un repartidor',
+        });
+      }
+      if (updated.deliveryId) {
+        await emitPusher(`private-user-${updated.deliveryId}`, 'delivery-assigned', {
+          orderId: updated.id,
+          order: { id: updated.id, total: updated.total, customerName: updated.customerName, customerPhone: updated.customerPhone, customerAddr: updated.customerAddr },
+          message: 'Tienes un nuevo pedido asignado',
+        });
+      }
+      await emitPusher(`private-order-${orderId}`, 'status-changed', {
+        orderId: updated.id,
+        status: 'confirmed',
+        delivery: updated.delivery,
+      });
+    } catch (pusherErr) {
+      console.error('[Orders] Error Pusher notificando asignación:', pusherErr.message);
+    }
+
     res.json({
       message: 'Delivery asignado correctamente',
       order: updated,
@@ -660,6 +745,30 @@ router.delete('/:id', authenticate, async (req, res, next) => {
       } catch (notifErr) {
         console.error('[Orders] Error notificando cancelacion:', notifErr.message);
       }
+    }
+
+    // Pusher: notificar cancelación en tiempo real
+    try {
+      if (order.userId) {
+        await emitPusher(`private-user-${order.userId}`, 'order-updated', {
+          orderId: order.id,
+          status: 'cancelled',
+          message: 'Tu pedido ha sido cancelado',
+        });
+      }
+      if (order.deliveryId) {
+        await emitPusher(`private-user-${order.deliveryId}`, 'order-updated', {
+          orderId: order.id,
+          status: 'cancelled',
+          message: `Pedido #${order.id} ha sido cancelado`,
+        });
+      }
+      await emitPusher(`private-order-${orderId}`, 'status-changed', {
+        orderId: order.id,
+        status: 'cancelled',
+      });
+    } catch (pusherErr) {
+      console.error('[Orders] Error Pusher notificando cancelacion:', pusherErr.message);
     }
 
     res.json({ message: 'Pedido cancelado y stock restaurado' });

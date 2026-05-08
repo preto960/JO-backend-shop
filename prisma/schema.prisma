@@ -110,6 +110,8 @@ model User {
   deletedBanners     Banner[]   @relation("BannerDeletedBy")
   createdBatches    ProductBatch[]  @relation("BatchCreator")
   deletedBatches    ProductBatch[]  @relation("BatchDeleter")
+  sentMessages      Message[]       @relation("MessageSender")
+  locationUpdates   LocationUpdate[] @relation("LocationUser")
 
   @@index([email])
   @@index([active])
@@ -238,6 +240,8 @@ model Order {
   delivery      User?      @relation("DeliveryPerson", fields: [deliveryId], references: [id])
 
   items         OrderItem[]
+  conversation  Conversation?
+  locationUpdates LocationUpdate[]
 
   @@index([status])
   @@index([createdAt])
@@ -397,4 +401,61 @@ model ProductBatchItem {
   @@index([batchId])
   @@index([productId])
   @@map("product_batch_items")
+}
+
+// ─── CHAT: CONVERSACIONES ────────────────────────────────────────────────
+
+model Conversation {
+  id             Int       @id @default(autoincrement())
+  type           String    @default("order") @db.VarChar(20) // "order" o "admin"
+  orderId        Int?      @unique @map("order_id")
+  participantIds Int[]     @map("participant_ids")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  order    Order?    @relation(fields: [orderId], references: [id])
+  messages Message[]
+
+  @@map("conversations")
+}
+
+// ─── CHAT: MENSAJES ──────────────────────────────────────────────────────
+
+model Message {
+  id             Int      @id @default(autoincrement())
+  conversationId Int      @map("conversation_id")
+  senderId       Int      @map("sender_id")
+  content        String   @db.Text
+  type           String   @default("text") @db.VarChar(20) // "text", "image", "system"
+  readAt         DateTime? @map("read_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User        @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+// ─── TRACKING: UBICACIONES EN TIEMPO REAL ────────────────────────────────
+
+model LocationUpdate {
+  id        Int      @id @default(autoincrement())
+  orderId   Int      @map("order_id")
+  userId    Int      @map("user_id")
+  lat       Float
+  lng       Float
+  heading   Float?   @db.DoublePrecision
+  speed     Float?   @db.DoublePrecision
+  createdAt DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+  user  User  @relation("LocationUser", fields: [userId], references: [id])
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("location_updates")
 }

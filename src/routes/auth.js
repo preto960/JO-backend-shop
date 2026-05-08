@@ -14,6 +14,7 @@ import {
 } from '../services/auth.js';
 import { getUserPermissions } from '../middleware/auth.js';
 import { sendWelcomeEmail, sendOtpEmail, isEmailConfigured } from '../services/email.js';
+import { emitPusher } from '../config/pusher.js';
 
 const router = express.Router();
 
@@ -340,6 +341,48 @@ router.post('/login', async (req, res, next) => {
       token,
       refreshToken,
     });
+
+    // Pusher: Emitir evento de presencia (usuario online)
+    try {
+      await emitPusher('presence-admin-chat', 'user-online', {
+        userId: user.id,
+        name: user.name,
+        email: user.email,
+        roles,
+      });
+    } catch (pusherErr) {
+      console.error('[Auth] Error Pusher emit online:', pusherErr.message);
+    }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /auth/logout - Cerrar sesión
+router.post('/logout', async (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const { verifyToken } = await import('../services/auth.js');
+      const decoded = verifyToken(authHeader.split(' ')[1]);
+      if (decoded && decoded.valid) {
+        // Marcar usuario como offline
+        await prisma.user.update({
+          where: { id: decoded.id },
+          data: { isOnline: false },
+        }).catch(() => {});
+
+        // Pusher: Emitir evento de presencia (usuario offline)
+        try {
+          await emitPusher('presence-admin-chat', 'user-offline', {
+            userId: decoded.id,
+          });
+        } catch (pusherErr) {
+          console.error('[Auth] Error Pusher emit offline:', pusherErr.message);
+        }
+      }
+    }
+    res.json({ message: 'Sesion cerrada' });
   } catch (err) {
     next(err);
   }
