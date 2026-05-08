@@ -34,8 +34,22 @@ router.get('/orders/:orderId/messages', authenticate, async (req, res, next) => 
       where: { orderId },
     });
 
+    // Si no existe conversación para este pedido, devolver vacío
+    // (sin esto, conversationId: undefined haría que Prisma devuelva TODOS los mensajes)
+    if (!conversation) {
+      return res.json({
+        data: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0,
+        },
+      });
+    }
+
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation?.id },
+      where: { conversationId: conversation.id },
       orderBy: { createdAt: 'asc' },
       skip,
       take: parseInt(limit),
@@ -47,7 +61,7 @@ router.get('/orders/:orderId/messages', authenticate, async (req, res, next) => 
     });
 
     const total = await prisma.message.count({
-      where: { conversationId: conversation?.id },
+      where: { conversationId: conversation.id },
     });
 
     res.json({
@@ -189,8 +203,21 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
       where: { type: 'admin' },
     });
 
+    // Si no existe conversación de admin, devolver vacío
+    if (!conversation) {
+      return res.json({
+        data: [],
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(limit),
+          total: 0,
+          totalPages: 0,
+        },
+      });
+    }
+
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation?.id },
+      where: { conversationId: conversation.id },
       orderBy: { createdAt: 'asc' },
       skip,
       take: parseInt(limit),
@@ -202,7 +229,7 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
     });
 
     const total = await prisma.message.count({
-      where: { conversationId: conversation?.id },
+      where: { conversationId: conversation.id },
     });
 
     res.json({
