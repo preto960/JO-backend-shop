@@ -1,9 +1,56 @@
 import { verifyToken } from '../services/auth.js';
 import prisma from '../lib/prisma.js';
 
+const SERVICE_PASSWORD = process.env.BACKEND_SERVICE_PASSWORD || 'Joshop2024!BridgeSec#Xk9';
+
 // Middleware de autenticación - Extrae user con roles y permisos
+// Soporta: (1) JWT Bearer token, (2) X-Service-Password para server-to-server (ej. landingpage bridge)
 export const authenticate = async (req, res, next) => {
   try {
+    // Service-to-service auth: X-Service-Password header
+    const servicePassword = req.headers['x-service-password'];
+    if (servicePassword && servicePassword === SERVICE_PASSWORD) {
+      const userEmail = req.headers['x-service-user-email'];
+      let serviceUser;
+
+      if (userEmail) {
+        // Look up real user by email
+        serviceUser = await prisma.user.findUnique({
+          where: { email: userEmail },
+          include: {
+            roles: { include: { role: { include: { permissions: { include: { permission: true } } } } } },
+            permissions: { include: { permission: true } },
+          },
+        });
+      }
+
+      if (serviceUser) {
+        const roleNames = serviceUser.roles.map(ur => ur.role.name);
+        const allPerms = [];
+        for (const ur of serviceUser.roles) {
+          for (const rp of ur.role.permissions) allPerms.push(rp.permission.code);
+        }
+        for (const up of serviceUser.permissions) allPerms.push(up.permission.code);
+
+        req.user = {
+          id: serviceUser.id,
+          email: serviceUser.email,
+          roles: roleNames,
+          permissions: [...new Set(allPerms)],
+        };
+      } else {
+        // Fallback: admin with all permissions if no user found
+        req.user = {
+          id: 0,
+          email: 'service@bridge',
+          roles: ['admin'],
+          permissions: ['admin-chat.view', 'admin-chat.send', 'dashboard.view'],
+        };
+      }
+      return next();
+    }
+
+    // Standard JWT auth
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {

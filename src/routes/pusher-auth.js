@@ -3,6 +3,51 @@ import Pusher from 'pusher';
 
 const router = express.Router();
 
+const SERVICE_PASSWORD = process.env.BACKEND_SERVICE_PASSWORD || 'Joshop2024!BridgeSec#Xk9';
+
+// ─── Helper: resolver usuario desde JWT o service-to-service auth ──────────
+async function resolveUser(req) {
+  // 1) Service-to-service auth via X-Service-Password
+  const svcPass = req.headers['x-service-password'];
+  if (svcPass && svcPass === SERVICE_PASSWORD) {
+    const email = req.headers['x-service-user-email'];
+    if (email) {
+      const { PrismaClient } = await import('@prisma/client');
+      const { PrismaPg } = await import('@prisma/adapter-pg');
+      const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+      const prisma = new PrismaClient({ adapter });
+      const user = await prisma.user.findUnique({
+        where: { email },
+        include: {
+          roles: { include: { role: true } },
+          permissions: { include: { permission: true } },
+        },
+      });
+      await prisma.$disconnect();
+      if (user) {
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          roles: user.roles.map(ur => ur.role.name),
+        };
+      }
+    }
+    // Fallback admin
+    return { id: 0, name: 'Service Bridge', email: 'service@bridge', roles: ['admin'] };
+  }
+
+  // 2) Standard JWT Bearer
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+
+  const { verifyToken } = await import('../services/auth.js');
+  const decoded = verifyToken(authHeader.split(' ')[1]);
+  if (!decoded || decoded.valid === false) return null;
+
+  return decoded;
+}
+
 // ─── POST /pusher/auth - Autenticar canales privados y presencia ──────────
 router.post('/auth', async (req, res) => {
   try {
@@ -17,16 +62,9 @@ router.post('/auth', async (req, res) => {
     const userMatch = channelName.match(/^private-user-(\d+)$/);
     if (userMatch) {
       const userId = parseInt(userMatch[1]);
-      // Verificar que el usuario autenticado coincide con el canal solicitado
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      const decoded = await resolveUser(req);
+      if (!decoded) {
         return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const { verifyToken } = await import('../services/auth.js');
-      const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || decoded.valid === false) {
-        return res.status(401).json({ error: 'Invalid token' });
       }
 
       // Admin puede suscribirse a cualquier canal de usuario
@@ -52,15 +90,9 @@ router.post('/auth', async (req, res) => {
     if (orderMatch) {
       const orderId = parseInt(orderMatch[1]);
 
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      const decoded = await resolveUser(req);
+      if (!decoded) {
         return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const { verifyToken } = await import('../services/auth.js');
-      const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || decoded.valid === false) {
-        return res.status(401).json({ error: 'Invalid token' });
       }
 
       const { PrismaClient } = await import('@prisma/client');
@@ -101,15 +133,9 @@ router.post('/auth', async (req, res) => {
 
     // ── Canal de presencia: presence-admin-chat ──
     if (channelName === 'presence-admin-chat') {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      const decoded = await resolveUser(req);
+      if (!decoded) {
         return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const { verifyToken } = await import('../services/auth.js');
-      const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || decoded.valid === false) {
-        return res.status(401).json({ error: 'Invalid token' });
       }
 
       // Solo admin puede unirse al chat de administradores
@@ -144,15 +170,9 @@ router.post('/auth', async (req, res) => {
     if (trackingMatch) {
       const orderId = parseInt(trackingMatch[1]);
 
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      const decoded = await resolveUser(req);
+      if (!decoded) {
         return res.status(401).json({ error: 'Authentication required' });
-      }
-
-      const { verifyToken } = await import('../services/auth.js');
-      const decoded = verifyToken(authHeader.split(' ')[1]);
-      if (!decoded || decoded.valid === false) {
-        return res.status(401).json({ error: 'Invalid token' });
       }
 
       const { PrismaClient } = await import('@prisma/client');
