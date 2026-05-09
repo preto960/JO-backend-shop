@@ -133,11 +133,15 @@ router.post('/orders/:orderId/messages', authenticate, async (req, res, next) =>
       }
     }
 
+    // Detectar plataforma desde header
+    const platform = req.headers['x-platform'] || 'unknown';
+
     // Crear mensaje
     const message = await prisma.message.create({
       data: {
         conversationId: conversation.id,
         senderId: req.user.id,
+        platform,
         content: content.trim(),
         type,
       },
@@ -155,6 +159,7 @@ router.post('/orders/:orderId/messages', authenticate, async (req, res, next) =>
       conversationId: conversation.id,
       senderId: message.senderId,
       senderName: message.sender.name,
+      platform: message.platform,
       content: message.content,
       type: message.type,
       createdAt: message.createdAt,
@@ -269,11 +274,15 @@ router.post('/admin/messages', authenticate, requirePermission('admin-chat.send'
       });
     }
 
+    // Detectar plataforma desde header
+    const platform = req.headers['x-platform'] || 'unknown';
+
     // Crear mensaje
     const message = await prisma.message.create({
       data: {
         conversationId: conversation.id,
         senderId: req.user.id,
+        platform,
         content: content.trim(),
         type,
       },
@@ -291,6 +300,7 @@ router.post('/admin/messages', authenticate, requirePermission('admin-chat.send'
       senderId: message.senderId,
       senderName: message.sender.name,
       senderEmail: message.sender.email,
+      platform: message.platform,
       content: message.content,
       type: message.type,
       createdAt: message.createdAt,

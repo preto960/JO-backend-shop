@@ -379,6 +379,26 @@ export async function ensureColumns() {
   } catch (err) {
     console.error('[DB] Error migrando permisos chat/tracking:', err.message);
   }
+
+  // ─── Nuevas columnas en messages: platform y recipient_id ─────────────────
+  try {
+    const result = await prisma.$queryRawUnsafe(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'messages' AND column_name = 'platform';
+    `);
+    if (!result || result.length === 0) {
+      console.log('[DB] Creando columna messages.platform...');
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE messages ADD COLUMN recipient_id INTEGER DEFAULT NULL;
+        ALTER TABLE messages ADD COLUMN platform VARCHAR(30) NOT NULL DEFAULT 'unknown';
+        CREATE INDEX IF NOT EXISTS idx_messages_recipient_id ON messages(recipient_id);
+        CREATE INDEX IF NOT EXISTS idx_messages_platform ON messages(platform);
+      `);
+      console.log('[DB] Columnas messages.platform y messages.recipient_id creadas.');
+    }
+  } catch (err) {
+    console.error('[DB] Error en auto-migration messages.platform:', err.message);
+  }
 }
 
 export default prisma;
