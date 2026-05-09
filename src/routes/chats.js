@@ -233,10 +233,6 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
             { senderId: req.user.id, recipientId: rid },
             // Mensajes que ese usuario me envió a mí
             { senderId: rid, recipientId: req.user.id },
-            // Mensajes de ese usuario sin destinatario específico (broadcast)
-            { senderId: rid, recipientId: null },
-            // Mis mensajes broadcast
-            { senderId: req.user.id, recipientId: null },
           ],
         };
       }
