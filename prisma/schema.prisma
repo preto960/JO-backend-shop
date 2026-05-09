@@ -426,7 +426,8 @@ model Message {
   conversationId Int       @map("conversation_id")
   senderId       Int       @map("sender_id")
   recipientId    Int?      @map("recipient_id")        // Destinatario directo (null = todos en la conversación)
-  platform       String    @default("unknown") @db.VarChar(30) // "app-shop", "app-delivery", "frontend-shop", "landingpage"
+  platform       String    @default("unknown") @db.VarChar(30) // Plataforma de origen: "app-shop", "app-delivery", "frontend-shop", "landingpage"
+  targetPlatform String    @default("all") @db.VarChar(30) @map("target_platform") // Plataforma destino: "all" = todos, o plataforma específica
   content        String    @db.Text
   type           String    @default("text") @db.VarChar(20) // "text", "image", "system"
   readAt         DateTime? @map("read_at")
@@ -439,6 +440,7 @@ model Message {
   @@index([senderId])
   @@index([recipientId])
   @@index([platform])
+  @@index([targetPlatform])
   @@index([createdAt])
   @@map("messages")
 }

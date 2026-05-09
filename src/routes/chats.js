@@ -200,7 +200,7 @@ router.post('/orders/:orderId/messages', authenticate, async (req, res, next) =>
 // ─── GET /chats/admin/messages - Obtener mensajes del chat de admin (presencia) ──
 router.get('/admin/messages', authenticate, requirePermission('admin-chat.view'), async (req, res, next) => {
   try {
-    const { page = 1, limit = 50 } = req.query;
+    const { page = 1, limit = 50, recipientId } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // La conversación de admin tiene type = 'admin' y orderId = null
@@ -221,8 +221,29 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
       });
     }
 
+    // Construir filtro: si se pide recipientId, filtrar mensajes entre yo y ese usuario
+    let whereClause = { conversationId: conversation.id };
+    if (recipientId) {
+      const rid = parseInt(recipientId);
+      if (!isNaN(rid)) {
+        whereClause = {
+          conversationId: conversation.id,
+          OR: [
+            // Mensajes que yo envié a ese usuario
+            { senderId: req.user.id, recipientId: rid },
+            // Mensajes que ese usuario me envió a mí
+            { senderId: rid, recipientId: req.user.id },
+            // Mensajes de ese usuario sin destinatario específico (broadcast)
+            { senderId: rid, recipientId: null },
+            // Mis mensajes broadcast
+            { senderId: req.user.id, recipientId: null },
+          ],
+        };
+      }
+    }
+
     const messages = await prisma.message.findMany({
-      where: { conversationId: conversation.id },
+      where: whereClause,
       orderBy: { createdAt: 'asc' },
       skip,
       take: parseInt(limit),
@@ -234,7 +255,7 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
     });
 
     const total = await prisma.message.count({
-      where: { conversationId: conversation.id },
+      where: whereClause,
     });
 
     res.json({
@@ -254,11 +275,24 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
 // ─── POST /chats/admin/messages - Enviar mensaje al chat de admin ──
 router.post('/admin/messages', authenticate, requirePermission('admin-chat.send'), async (req, res, next) => {
   try {
-    const { content, type = 'text' } = req.body;
+    const { content, type = 'text', recipientId, targetPlatform } = req.body;
 
     if (!content || !content.trim()) {
       return res.status(400).json({ error: 'El contenido del mensaje es requerido' });
     }
+
+    // Validar recipientId si se envía
+    let validatedRecipientId = null;
+    if (recipientId !== undefined && recipientId !== null) {
+      validatedRecipientId = parseInt(recipientId);
+      if (isNaN(validatedRecipientId)) {
+        return res.status(400).json({ error: 'recipientId debe ser un número válido' });
+      }
+    }
+
+    // Validar targetPlatform si se envía
+    const validPlatforms = ['all', 'frontend-shop', 'landingpage', 'app-shop', 'app-delivery'];
+    const validatedTargetPlatform = validPlatforms.includes(targetPlatform) ? targetPlatform : 'all';
 
     // Obtener o crear conversación de admin
     let conversation = await prisma.conversation.findFirst({
@@ -277,12 +311,14 @@ router.post('/admin/messages', authenticate, requirePermission('admin-chat.send'
     // Detectar plataforma desde header
     const platform = req.headers['x-platform'] || 'unknown';
 
-    // Crear mensaje
+    // Crear mensaje con recipientId y targetPlatform
     const message = await prisma.message.create({
       data: {
         conversationId: conversation.id,
         senderId: req.user.id,
+        recipientId: validatedRecipientId,
         platform,
+        targetPlatform: validatedTargetPlatform,
         content: content.trim(),
         type,
       },
@@ -300,7 +336,9 @@ router.post('/admin/messages', authenticate, requirePermission('admin-chat.send'
       senderId: message.senderId,
       senderName: message.sender.name,
       senderEmail: message.sender.email,
-      platform: message.platform,
+      senderPlatform: message.platform,
+      recipientId: message.recipientId,
+      targetPlatform: message.targetPlatform,
       content: message.content,
       type: message.type,
       createdAt: message.createdAt,
