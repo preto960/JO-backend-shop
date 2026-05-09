@@ -200,7 +200,7 @@ router.post('/orders/:orderId/messages', authenticate, async (req, res, next) =>
 // ─── GET /chats/admin/messages - Obtener mensajes del chat de admin (presencia) ──
 router.get('/admin/messages', authenticate, requirePermission('admin-chat.view'), async (req, res, next) => {
   try {
-    const { page = 1, limit = 50, recipientId } = req.query;
+    const { page = 1, limit = 50, recipientId, senderPlatform, recipientPlatform } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
     // La conversación de admin tiene type = 'admin' y orderId = null
@@ -221,17 +221,48 @@ router.get('/admin/messages', authenticate, requirePermission('admin-chat.view')
       });
     }
 
-    // Construir filtro: si se pide recipientId, filtrar mensajes entre yo y ese usuario
+    // Construir filtro
     let whereClause = { conversationId: conversation.id };
-    if (recipientId) {
+
+    if (recipientId && senderPlatform && recipientPlatform) {
+      // Conversación directa entre dos plataformas del mismo usuario.
+      // senderPlatform = plataforma desde la que yo estoy viendo el chat
+      // recipientPlatform = plataforma del usuario con el que estoy chateando
+      const rid = parseInt(recipientId);
+      if (!isNaN(rid)) {
+        const validPlatforms = ['frontend-shop', 'landingpage', 'app-shop', 'app-delivery'];
+        const myPlat = validPlatforms.includes(senderPlatform) ? senderPlatform : null;
+        const theirPlat = validPlatforms.includes(recipientPlatform) ? recipientPlatform : null;
+
+        if (myPlat && theirPlat) {
+          // Filtrar estrictamente por par de plataformas:
+          // - Mensajes que YO envié DESDE mi plataforma PARA su plataforma
+          // - Mensajes que ELLOS enviaron DESDE su plataforma PARA mi plataforma
+          whereClause = {
+            conversationId: conversation.id,
+            OR: [
+              { senderId: req.user.id, platform: myPlat, targetPlatform: theirPlat },
+              { senderId: rid, platform: theirPlat, targetPlatform: myPlat },
+            ],
+          };
+        } else {
+          // Fallback si las plataformas no son válidas
+          whereClause = {
+            conversationId: conversation.id,
+            OR: [
+              { senderId: req.user.id, recipientId: rid },
+              { senderId: rid, recipientId: req.user.id },
+            ],
+          };
+        }
+      }
+    } else if (recipientId) {
       const rid = parseInt(recipientId);
       if (!isNaN(rid)) {
         whereClause = {
           conversationId: conversation.id,
           OR: [
-            // Mensajes que yo envié a ese usuario
             { senderId: req.user.id, recipientId: rid },
-            // Mensajes que ese usuario me envió a mí
             { senderId: rid, recipientId: req.user.id },
           ],
         };
