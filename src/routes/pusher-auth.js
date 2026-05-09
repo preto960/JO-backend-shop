@@ -185,8 +185,11 @@ router.post('/auth', async (req, res) => {
       // Read platform from client header so each UI can filter by source
       const platform = req.headers['x-platform'] || 'unknown';
 
+      // CRITICAL: user_id must include platform suffix so the same admin
+      // can be connected from multiple platforms simultaneously. Without this,
+      // Pusher replaces the first connection when the same user_id joins again.
       const presenceData = {
-        user_id: String(decoded.id),
+        user_id: `${decoded.id}-${platform}`,
         user_info: {
           id: decoded.id,
           name: decoded.name || decoded.email,
