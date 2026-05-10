@@ -139,6 +139,63 @@ router.post('/upload-logo', authenticate, upload.single('file'), async (req, res
   }
 });
 
+// POST /config/upload-loader - Subir imagen del loader a Vercel Blob (solo admin)
+router.post('/upload-loader', authenticate, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se envió ningún archivo' });
+    }
+
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    if (!blobToken) {
+      return res.status(500).json({ error: 'BLOB_READ_WRITE_TOKEN no configurado' });
+    }
+
+    const safeName = req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blobName = `config_loader/${Date.now()}-${safeName}`;
+
+    const blob = await put(blobName, req.file.buffer, {
+      access: 'public',
+      contentType: req.file.mimetype,
+      addRandomSuffix: false,
+    });
+
+    await upsertConfig('shop_loader_url', blob.url);
+
+    res.json({
+      success: true,
+      url: blob.url,
+      message: 'Imagen del loader actualizada',
+    });
+  } catch (err) {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'El archivo excede el límite de 2MB' });
+      }
+    }
+    next(err);
+  }
+});
+
+// DELETE /config/upload-loader - Eliminar imagen del loader (solo admin)
+router.delete('/upload-loader', authenticate, async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.roles.includes('admin')) {
+      return res.status(403).json({ error: 'Solo administradores pueden modificar la configuración' });
+    }
+
+    await upsertConfig('shop_loader_url', '');
+
+    res.json({ success: true, message: 'Imagen del loader eliminada' });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /config/upload-logo - Eliminar logo del shop (solo admin)
 router.delete('/upload-logo', authenticate, async (req, res, next) => {
   try {
